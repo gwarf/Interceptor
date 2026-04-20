@@ -1,6 +1,6 @@
 # Interceptor — Architecture
 
-This document describes the live architecture as of PRD-32 / PRD-33 / PRD-34 / PRD-37. It is not a tutorial — it explains *how the pieces fit*, with file references. For user-facing usage see `README.md` / `AGENTS.md`. For change rationale see `prd/PRD-*.md`.
+This document describes the live architecture as of the current monitor, CSP-fallback, and native-capture implementation. It is not a tutorial — it explains *how the pieces fit*, with file references. For user-facing usage see `README.md` / `AGENTS.md`.
 
 ---
 
@@ -37,7 +37,7 @@ This document describes the live architecture as of PRD-32 / PRD-33 / PRD-34 / P
 
 ---
 
-## Monitor Subsystem (PRD-32 / PRD-33 / PRD-34)
+## Monitor Subsystem
 
 The monitor is the most architecturally interesting subsystem. Three PRDs shaped its current form.
 
@@ -84,8 +84,8 @@ interface AttachmentRecord {
 | `webNavigation.onHistoryStateUpdated` | top frame | (no switch, URL update) | SPA pushState |
 | `webNavigation.onReferenceFragmentUpdated` | top frame | (no switch, URL update) | Hash change |
 | `webNavigation.onTabReplaced` | tab swap | `tab_replaced` | Prerender activation, etc. |
-| `tabs.onCreated` + opener-gated heuristic | child tab | `child_tab` | **PRD-32**: child opened by trusted action on monitored tab within 5s |
-| `tabs.onActivated` + group membership | manual focus | `focus_switch` | **PRD-34**: user activates another tab in the interceptor group |
+| `tabs.onCreated` + opener-gated heuristic | child tab | `child_tab` | child opened by trusted action on monitored tab within 5s |
+| `tabs.onActivated` + group membership | manual focus | `focus_switch` | user activates another tab in the interceptor group |
 
 `tabs.onActivated` short-circuits if `pendingChildTabs.has(tabId)` so the child-tab path always wins for child-tab cases.
 
@@ -137,11 +137,11 @@ Plus:
 
 `monitor export <sid>` prefers the per-session artifact and falls back to the global log only for legacy sessions (`hasSessionArtifacts(sid)` check in [`cli/commands/monitor.ts:93-99`](cli/commands/monitor.ts)).
 
-### Transport resilience (PRD-33)
+### Transport resilience
 
 `chrome.runtime.Port.postMessage()` throws synchronously if the port is disconnected (Chrome runtime docs). MV3 service workers can be evicted, native ports can disconnect, and `onDisconnect` is asynchronous — so there is a window where `nativePort` is truthy but calls on it throw.
 
-PRD-33 introduced [`extension/src/background/safe-port-post.ts`](extension/src/background/safe-port-post.ts), a pure helper with zero chrome dependency that traps the throw. [`extension/src/background/transport.ts`](extension/src/background/transport.ts) wraps both `nativePort.postMessage` call sites through it; on throw it nulls the reference, downgrades `activeTransport`, and the caller falls through to the WebSocket channel.
+[`extension/src/background/safe-port-post.ts`](extension/src/background/safe-port-post.ts) is a pure helper with zero chrome dependency that traps a synchronous `Port.postMessage()` throw. [`extension/src/background/transport.ts`](extension/src/background/transport.ts) wraps both `nativePort.postMessage` call sites through it; on throw it nulls the reference, downgrades `activeTransport`, and the caller falls through to the WebSocket channel.
 
 `monitor_stop` (and `tabs.onRemoved`) wrap their `detachAttachment` + `sendToHost(mon_stop)` in `try` and run `sessions.delete` / `activeSessionByTab.delete` / `clearPendingChildTabsForSession` in `finally`. Cleanup is now guaranteed even if transport raises.
 
@@ -158,7 +158,7 @@ Caps: 64 KiB per entry, JSON / text / XML / JS content types only, conservative 
 [`buildPlan`](cli/commands/monitor.ts) walks the session events and emits a runnable `interceptor` script. Notable special cases:
 
 - `mon_attach` with `reason === "child_tab"` → `interceptor tab new "<url>"` + `interceptor wait-stable`
-- `mon_attach` with `reason === "focus_switch"` → `interceptor tab switch <tabId>` + `interceptor wait-stable` (PRD-34)
+- `mon_attach` with `reason === "focus_switch"` → `interceptor tab switch <tabId>` + `interceptor wait-stable`
 - `mut` between two actions → inserts `interceptor wait-stable`
 - `nav` with `typ === "hard" | "reload"` → `interceptor navigate "<url>"`
 - masked password `input` → `# TODO` line
@@ -176,7 +176,7 @@ Caps: 64 KiB per entry, JSON / text / XML / JS content types only, conservative 
 
 ### Page-world eval on strict-CSP sites
 
-`extension/src/background/capabilities/evaluate.ts` now treats page CSP as a first-class runtime concern. On a `MAIN`-world eval failure that matches a CSP/`unsafe-eval` pattern, it installs a tab-scoped **session** `declarativeNetRequest` rule that strips `content-security-policy` and `content-security-policy-report-only`, reloads the tab, then retries once. This is the behavior proven against OpenStreetMap in [PRD-37](prd/PRD-37.md).
+`extension/src/background/capabilities/evaluate.ts` now treats page CSP as a first-class runtime concern. On a `MAIN`-world eval failure that matches a CSP/`unsafe-eval` pattern, it installs a tab-scoped **session** `declarativeNetRequest` rule that strips `content-security-policy` and `content-security-policy-report-only`, reloads the tab, then retries once. This is the behavior proven against OpenStreetMap during live validation.
 
 `extension/src/background/capabilities/meta.ts` also exposes `userScripts` capability diagnostics so live validation can distinguish between the `userScripts` route and the CSP-bypass fallback.
 
@@ -186,7 +186,7 @@ Caps: 64 KiB per entry, JSON / text / XML / JS content types only, conservative 
 
 ### Tab group isolation
 
-[`extension/src/background/tab-group.ts`](extension/src/background/tab-group.ts) maintains the cyan "interceptor" tab group. By default all interceptor commands operate only on tabs in this group; `--any-tab` opts out. PRD-34's focus-follow respects this boundary.
+[`extension/src/background/tab-group.ts`](extension/src/background/tab-group.ts) maintains the cyan "interceptor" tab group. By default all interceptor commands operate only on tabs in this group; `--any-tab` opts out. Focus-follow respects this boundary.
 
 ### Transport routing (daemon)
 
@@ -228,13 +228,11 @@ For screenshot saving, `interceptor-bridge/Sources/Domains/CaptureDomain.swift` 
 
 ---
 
-## PRD Index
+## Implementation Notes
 
-| PRD | Subject | Status |
-|---|---|---|
-| [PRD-32](prd/PRD-32.md) | Document-scoped sessions, child-tab handoff, durable artifacts, body persistence | Implemented |
-| [PRD-33](prd/PRD-33.md) | Transport resilience — `monitor stop` non-throw on disconnected port | Implemented |
-| [PRD-34](prd/PRD-34.md) | Focus-follow — auto-attach to manually switched tabs in the interceptor group | Implemented |
-| [PRD-37](prd/PRD-37.md) | Strict-CSP `eval --main` fallback via tab-scoped CSP stripping and retry | Implemented |
+Recent major additions reflected in this document:
 
-Older PRDs (`PRD-18` through `PRD-31`) document the evolution from single-tab monitor and pre-compound-command CLI to today's architecture; consult them for historical context.
+- document-scoped monitor sessions with child-tab handoff and focus-follow
+- transport hardening around disconnected native ports
+- strict-CSP `eval --main` fallback via tab-scoped CSP stripping and retry
+- launchd-safe macOS screenshot saving

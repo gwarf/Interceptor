@@ -11,6 +11,7 @@ interceptor-screenshot-*.jpg
 interceptor-screenshot-*.png
 interceptor-macos-screenshot-*.jpg
 interceptor-macos-screenshot-*.png
+prd/
 scripts/auto-improve/
 signing.env
 notarization.env

@@ -3,8 +3,7 @@
 This repository now uses `AGENTS.md` as the canonical agent-instructions file.
 
 For user-facing command reference, examples, and workflows, see [README.md](README.md).  
-For implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).  
-For change rationale, see [prd/](prd/).
+For implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Working Rules
 
