@@ -1,7 +1,7 @@
 # Use Case: Cook Inside Existing Canvases
 
-**Date:** 2026-04-23  
-**Agent:** Codex  
+**Date:** 2026-04-23
+**Agent:** Codex
 **Target:** Existing `<canvas>` surfaces in live sites such as Google Docs and Excalidraw
 
 ---
