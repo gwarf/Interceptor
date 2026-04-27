@@ -263,17 +263,20 @@ bash scripts/uninstall.sh --bridge-only     # Remove only the macOS bridge (down
 #### Verify
 
 ```bash
-./dist/interceptor status
-# Browser-only install:
+./dist/interceptor status                     # Self-check (local pre-spawn) — does NOT start the daemon
+./dist/interceptor open https://example.com   # Canonical first-run check — spawns the daemon and exercises the full stack
+# Browser-only install reports:
 #   mode: browser-only
 #   daemon: running
 #   ...
-# Full install:
+# Full install reports:
 #   mode: full
 #   daemon: running
 #   bridge: running
 #   ...
 ```
+
+`daemon: not running` from `status` on a fresh install is normal — `status` is a local pre-spawn check that never starts the daemon. Run `interceptor open <url>` to spawn the daemon and verify the daemon, native messaging bridge, extension, and page together.
 
 In browser-only mode, running an `interceptor macos *` command returns a structured "requires full computer-use install" error within 1 second instead of timing out at 15 seconds.
 
