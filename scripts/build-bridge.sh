@@ -20,6 +20,8 @@ DIST_DIR="$PROJECT_DIR/dist"
 INTERCEPTOR_SIGNING_IDENTITY="${INTERCEPTOR_SIGNING_IDENTITY:-Developer ID Application: HACKER VALLEY MEDIA, LLC (TPWBZD35WW)}"
 INTERCEPTOR_BRIDGE_IDENTIFIER="com.interceptor.bridge"
 INTERCEPTOR_BRIDGE_VERSION="${INTERCEPTOR_BRIDGE_VERSION:-1.0.0}"
+INTERCEPTOR_SPARKLE_FEED_URL="${INTERCEPTOR_SPARKLE_FEED_URL:-https://updates.hackervalley.media/appcast.xml}"
+INTERCEPTOR_SPARKLE_PUBLIC_KEY="${INTERCEPTOR_SPARKLE_PUBLIC_KEY:-dnUnuHGCO4obHb44Khlf2TZQFUMmFGGpm2c6j+EqmdU=}"
 ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
 APP_DIR="$DIST_DIR/interceptor-bridge.app"
 
@@ -48,8 +50,22 @@ echo "==> Building .app bundle at $APP_DIR ..."
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
+mkdir -p "$APP_DIR/Contents/Frameworks"
 
 cp "$BINARY" "$APP_DIR/Contents/MacOS/interceptor-bridge"
+
+# Copy Sparkle.framework into the .app bundle. The bridge binary already
+# links @rpath/Sparkle.framework/Versions/B/Sparkle and Package.swift sets
+# the rpath to @executable_path/../Frameworks, so this is the only step
+# needed for runtime resolution. Sparkle's own XPCServices/Autoupdate/
+# Updater.app helpers ship inside the framework.
+SPARKLE_FRAMEWORK="$BRIDGE_DIR/.build/arm64-apple-macosx/release/Sparkle.framework"
+if [ -d "$SPARKLE_FRAMEWORK" ]; then
+  echo "==> Copying Sparkle.framework into the .app"
+  ditto "$SPARKLE_FRAMEWORK" "$APP_DIR/Contents/Frameworks/Sparkle.framework"
+else
+  echo "WARN: Sparkle.framework not found at $SPARKLE_FRAMEWORK — auto-update will fail" >&2
+fi
 
 # Copy bundled Core ML models into the .app's Resources directory.
 # We put them under Contents/Resources/ (rather than letting SwiftPM
@@ -102,6 +118,23 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>interceptor-bridge captures screen frames when you ask Interceptor to take screenshots or run screen capture / stream commands.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>interceptor-bridge captures microphone input when you ask Interceptor to use listen / audio commands.</string>
+
+    <!-- Sparkle auto-update. The bridge polls the appcast feed, prompts the
+         user when a new pkg is available, and hands the .pkg off to the
+         macOS installer. Public EdDSA key is matched against per-release
+         sign_update signatures embedded in each appcast item. -->
+    <key>SUFeedURL</key>
+    <string>$INTERCEPTOR_SPARKLE_FEED_URL</string>
+    <key>SUPublicEDKey</key>
+    <string>$INTERCEPTOR_SPARKLE_PUBLIC_KEY</string>
+    <key>SUEnableInstallerLauncherService</key>
+    <true/>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key>
+    <false/>
 </dict>
 </plist>
 PLIST
@@ -111,6 +144,32 @@ if [[ "${INTERCEPTOR_SKIP_SIGNING:-0}" == "1" ]]; then
 else
   if security find-identity -p codesigning -v 2>/dev/null | grep -q "$INTERCEPTOR_SIGNING_IDENTITY"; then
     echo "==> Codesigning bundle with: $INTERCEPTOR_SIGNING_IDENTITY"
+
+    # Sign Sparkle.framework + nested helpers FIRST (inside-out is the rule).
+    # Sparkle's helpers don't need our entitlements — they get hardened
+    # runtime + timestamp only. The framework itself wraps everything.
+    SPARKLE_BUNDLE="$APP_DIR/Contents/Frameworks/Sparkle.framework"
+    if [ -d "$SPARKLE_BUNDLE" ]; then
+      echo "==> Codesigning Sparkle helpers"
+      for comp in \
+        "$SPARKLE_BUNDLE/Versions/B/XPCServices/Downloader.xpc" \
+        "$SPARKLE_BUNDLE/Versions/B/XPCServices/Installer.xpc" \
+        "$SPARKLE_BUNDLE/Versions/B/Updater.app" \
+        "$SPARKLE_BUNDLE/Versions/B/Autoupdate" \
+        "$SPARKLE_BUNDLE/Versions/B/Sparkle"
+      do
+        if [ -e "$comp" ]; then
+          codesign --force --options runtime --timestamp \
+            --sign "$INTERCEPTOR_SIGNING_IDENTITY" \
+            "$comp"
+        fi
+      done
+      # Versioned framework bundle wrap.
+      codesign --force --options runtime --timestamp \
+        --sign "$INTERCEPTOR_SIGNING_IDENTITY" \
+        "$SPARKLE_BUNDLE"
+    fi
+
     # Sign the inner binary first, then the bundle, with the same entitlements.
     codesign --force --options runtime --timestamp \
       --sign "$INTERCEPTOR_SIGNING_IDENTITY" \
@@ -128,6 +187,9 @@ else
   else
     echo "==> Signing identity not present in keychain — performing ad-hoc sign for development."
     echo "    Set INTERCEPTOR_SIGNING_IDENTITY to a real Developer ID for distribution."
+    if [ -d "$APP_DIR/Contents/Frameworks/Sparkle.framework" ]; then
+      codesign --force --deep --sign - "$APP_DIR/Contents/Frameworks/Sparkle.framework" 2>/dev/null || true
+    fi
     codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_DIR/Contents/MacOS/interceptor-bridge" 2>/dev/null || true
     codesign --force --sign - --entitlements "$ENTITLEMENTS" "$APP_DIR" 2>/dev/null || true
   fi

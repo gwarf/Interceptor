@@ -4,9 +4,18 @@ import PackageDescription
 let package = Package(
     name: "interceptor-bridge",
     platforms: [.macOS(.v14)],
+    dependencies: [
+        // Sparkle for in-app auto-update. The bridge polls the appcast,
+        // prompts the user when a new pkg is available, and hands the
+        // download off to the macOS installer.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
+    ],
     targets: [
         .executableTarget(
             name: "interceptor-bridge",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources",
             // helper subprocess lives in Sources/InterceptorVDHelper —
             // exclude from the main bridge target since it has its own
@@ -35,6 +44,9 @@ let package = Package(
                 .linkedFramework("SpriteKit"),
                 // Apple Events / TCC consent (AEDeterminePermissionToAutomateTarget)
                 .linkedFramework("Carbon"),
+                // .app bundle layout: Contents/MacOS/<bin> needs to find
+                // Contents/Frameworks/Sparkle.framework at runtime.
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
             ]
         ),
         // tiny clean-process helper that creates a CGVirtualDisplay

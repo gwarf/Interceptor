@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import AppKit
+import Sparkle
 
 Platform.log("interceptor-bridge starting")
 Platform.cleanupSocket()
@@ -131,4 +132,16 @@ signal(SIGTERM) { _ in
 // resident on the main run loop instead.
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory) // No dock icon, no menu bar
+
+// Sparkle auto-update. SUFeedURL + SUPublicEDKey + scheduled-check settings
+// live in the bundled Info.plist (see scripts/build-bridge.sh). Holding a
+// strong reference here for the lifetime of the process; Sparkle handles its
+// own polling, prompts, and the hand-off to the macOS installer for the .pkg.
+let updaterController = SPUStandardUpdaterController(
+    startingUpdater: true,
+    updaterDelegate: nil,
+    userDriverDelegate: nil
+)
+Platform.log("sparkle updater started; feed: \(updaterController.updater.feedURL?.absoluteString ?? "unset")")
+
 RunLoop.main.run()

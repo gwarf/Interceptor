@@ -37,6 +37,10 @@ cd "$REPO_ROOT"
 SIGNING_IDENTITY="${INTERCEPTOR_SIGNING_IDENTITY:-Developer ID Application: HACKER VALLEY MEDIA, LLC (TPWBZD35WW)}"
 INSTALLER_IDENTITY="${INTERCEPTOR_INSTALLER_IDENTITY:-Developer ID Installer: HACKER VALLEY MEDIA, LLC (TPWBZD35WW)}"
 NOTARY_PROFILE="${INTERCEPTOR_NOTARY_PROFILE:-interceptor-notary}"
+SPARKLE_VERSION="${INTERCEPTOR_SPARKLE_VERSION:-2.9.1}"
+SPARKLE_TOOLS_DIR="${INTERCEPTOR_SPARKLE_TOOLS_DIR:-$HOME/.cache/interceptor-sparkle/$SPARKLE_VERSION}"
+SPARKLE_HOST_DIR="${INTERCEPTOR_SPARKLE_HOST_DIR:-$REPO_ROOT/../Interceptor-Updates-Sparkle}"
+DOWNLOAD_URL_PREFIX="${INTERCEPTOR_DOWNLOAD_URL_PREFIX:-https://updates.hackervalley.media/}"
 ENT="$REPO_ROOT/scripts/entitlements.plist"
 DIST_XML="$REPO_ROOT/scripts/release/distribution.xml"
 POSTINSTALL="$REPO_ROOT/scripts/release/postinstall"
@@ -343,8 +347,129 @@ rm -rf "$RELEASE_DIR/_payload"
 rm -f "$PAYLOAD_ZIP"
 rm -f "$UNSIGNED_PKG"
 
+# ── Step 13: Publish Sparkle appcast ──────────────────────────────────────────
+# Copy the new .pkg into the local staging dir of the update host, regenerate
+# appcast.xml (Sparkle's generate_appcast signs each .pkg with the EdDSA
+# private key from the keychain and writes <sparkle:installationType>package</>
+# entries automatically), then `rwh up` to push to Railway. End result:
+# https://updates.hackervalley.media/appcast.xml advertises the new version.
+echo "==> Step 13: Publishing Sparkle appcast"
+
+# Cache Sparkle's CLI tools (generate_appcast, sign_update) on first use.
+if [ ! -x "$SPARKLE_TOOLS_DIR/bin/generate_appcast" ]; then
+  echo "    Caching Sparkle $SPARKLE_VERSION tools in $SPARKLE_TOOLS_DIR"
+  mkdir -p "$SPARKLE_TOOLS_DIR"
+  curl -sSL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" \
+    -o "$SPARKLE_TOOLS_DIR/sparkle.tar.xz"
+  tar xf "$SPARKLE_TOOLS_DIR/sparkle.tar.xz" -C "$SPARKLE_TOOLS_DIR"
+  rm -f "$SPARKLE_TOOLS_DIR/sparkle.tar.xz"
+fi
+
+if [ ! -d "$SPARKLE_HOST_DIR" ]; then
+  echo "WARN: Sparkle host dir missing at $SPARKLE_HOST_DIR" >&2
+  echo "      Skipping appcast publish. Set INTERCEPTOR_SPARKLE_HOST_DIR" >&2
+  echo "      or check out the Interceptor-Updates-Sparkle project there." >&2
+else
+  HOST_PUBLIC="$SPARKLE_HOST_DIR/public"
+  mkdir -p "$HOST_PUBLIC"
+
+  echo "    Copying $SIGNED_PKG → $HOST_PUBLIC/"
+  cp "$SIGNED_PKG" "$HOST_PUBLIC/Interceptor-${VERSION}.pkg"
+
+  # generate_appcast doesn't support .pkg updates (Sparkle's docs are explicit
+  # about that). Use sign_update instead to get the EdDSA sig + length and
+  # build/update the appcast item ourselves.
+  echo "    Running sign_update on the .pkg"
+  SIG_LINE="$("$SPARKLE_TOOLS_DIR/bin/sign_update" "$HOST_PUBLIC/Interceptor-${VERSION}.pkg" 2>&1 | tail -1)"
+  echo "    $SIG_LINE"
+
+  echo "    Updating appcast.xml"
+  HOST_APPCAST="$HOST_PUBLIC/appcast.xml" \
+  PKG_VERSION="$VERSION" \
+  PKG_URL="${DOWNLOAD_URL_PREFIX}Interceptor-${VERSION}.pkg" \
+  PKG_SIG_LINE="$SIG_LINE" \
+  python3 - <<'PY'
+import os, re, sys
+from datetime import datetime, timezone
+from xml.etree import ElementTree as ET
+
+ET.register_namespace("sparkle", "http://www.andymatuschak.org/xml-namespaces/sparkle")
+SP = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
+
+path = os.environ["HOST_APPCAST"]
+version = os.environ["PKG_VERSION"]
+url = os.environ["PKG_URL"]
+sig_line = os.environ["PKG_SIG_LINE"].strip()
+
+# sign_update output line looks like:
+#   sparkle:edSignature="..." length="..."
+m = re.search(r'sparkle:edSignature="([^"]+)"\s+length="([0-9]+)"', sig_line)
+if not m:
+    print(f"ERROR: could not parse sign_update output: {sig_line}", file=sys.stderr)
+    sys.exit(1)
+ed_sig, length = m.group(1), m.group(2)
+
+if os.path.exists(path):
+    tree = ET.parse(path)
+    root = tree.getroot()
+    channel = root.find("channel")
+else:
+    root = ET.Element("rss", {
+        "version": "2.0",
+        "xmlns:sparkle": "http://www.andymatuschak.org/xml-namespaces/sparkle",
+    })
+    channel = ET.SubElement(root, "channel")
+    ET.SubElement(channel, "title").text = "Interceptor"
+    ET.SubElement(channel, "link").text = "https://github.com/Hacker-Valley-Media/Interceptor"
+    ET.SubElement(channel, "description").text = "Sparkle update feed for Interceptor."
+    ET.SubElement(channel, "language").text = "en"
+    tree = ET.ElementTree(root)
+
+# Drop any prior <item> for this version (idempotency).
+for item in list(channel.findall("item")):
+    sv = item.find(f"{SP}shortVersionString")
+    if sv is not None and sv.text == version:
+        channel.remove(item)
+
+item = ET.Element("item")
+ET.SubElement(item, "title").text = f"Version {version}"
+ET.SubElement(item, "pubDate").text = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+ET.SubElement(item, f"{SP}version").text = version
+ET.SubElement(item, f"{SP}shortVersionString").text = version
+ET.SubElement(item, f"{SP}minimumSystemVersion").text = "14.0"
+ET.SubElement(item, f"{SP}installationType").text = "package"
+ET.SubElement(item, "enclosure", {
+    "url": url,
+    f"{SP}edSignature": ed_sig,
+    "length": length,
+    "type": "application/octet-stream",
+})
+
+# Insert at the top of the channel so newest is first.
+title = channel.find("title")
+insert_at = list(channel).index(channel.findall("language")[-1]) + 1 if channel.find("language") is not None else 0
+channel.insert(insert_at, item)
+
+# Write with indent for readability.
+ET.indent(tree, space="    ")
+tree.write(path, encoding="utf-8", xml_declaration=True)
+print(f"    appcast.xml updated for version {version}")
+PY
+
+  echo "    Deploying update host to Railway via rwh"
+  if command -v rwh >/dev/null 2>&1; then
+    (cd "$SPARKLE_HOST_DIR" && rwh up --service interceptor-updates --detach 2>&1 | tail -5) || \
+      echo "    WARN: rwh up exited non-zero — appcast may not be live" >&2
+  else
+    echo "    WARN: rwh CLI not on PATH — push $HOST_PUBLIC manually" >&2
+  fi
+fi
+
 echo "================================================================"
 echo "Release ready:"
 echo "  $SIGNED_PKG"
 echo "  $(du -h "$SIGNED_PKG" | cut -f1) — signed, notarized, stapled"
+echo ""
+echo "Sparkle feed:  ${DOWNLOAD_URL_PREFIX}appcast.xml"
+echo "Download URL:  ${DOWNLOAD_URL_PREFIX}Interceptor-${VERSION}.pkg"
 echo "================================================================"
