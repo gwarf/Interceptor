@@ -13,6 +13,7 @@ let reconnectDelay = 1000
 let wsChannel: WebSocket | null = null
 let wsReady = false
 let wsKeepAliveTimer: ReturnType<typeof setInterval> | null = null
+let wsRetryTimer: ReturnType<typeof setTimeout> | null = null
 let keepalivePongTimer: ReturnType<typeof setTimeout> | null = null
 let pendingHandshakePort: chrome.runtime.Port | null = null
 let lastNativeActivityAt = 0
@@ -203,6 +204,16 @@ function stopWsKeepAlive(): void {
   wsKeepAliveTimer = null
 }
 
+// Quick retry after connection failure so the daemon's startup latency
+// doesn't leave the WS unconnected until the 30s alarm fires.
+function scheduleWsRetry(): void {
+  if (wsRetryTimer) return
+  wsRetryTimer = setTimeout(() => {
+    wsRetryTimer = null
+    connectWsChannel()
+  }, 2000)
+}
+
 export function connectWsChannel(): void {
   if (wsChannel && (wsChannel.readyState === WebSocket.OPEN || wsChannel.readyState === WebSocket.CONNECTING)) return
   try {
@@ -239,12 +250,15 @@ export function connectWsChannel(): void {
       wsReady = false
       wsChannel = null
       if (activeTransport === "websocket") activeTransport = "none"
+      // onerror fires before onclose on refused connections — retry is already scheduled there
     }
     ws.onerror = () => {
       stopWsKeepAlive()
       wsReady = false
       wsChannel = null
       if (activeTransport === "websocket") activeTransport = "none"
+      // Retry quickly if no native port — daemon may still be starting
+      if (!nativePort) scheduleWsRetry()
     }
   } catch {}
 }
