@@ -23,5 +23,19 @@
          /AVFoundation/requesting-authorization-to-capture-and-save-media.md -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
+    <!-- PRD-66 personal-data domains. tccd silently denies privacy prompts
+         under hardened runtime when the matching entitlement is absent —
+         confirmed in unified log: "Prompting policy for hardened runtime;
+         service: kTCCServiceCalendar requires entitlement
+         com.apple.security.personal-information.calendars but it is missing".
+         Same gate hits Reminders, Contacts, Photos, and Location. -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <key>com.apple.security.personal-information.addressbook</key>
+    <true/>
+    <key>com.apple.security.personal-information.photos-library</key>
+    <true/>
+    <key>com.apple.security.personal-information.location</key>
+    <true/>
 </dict>
 </plist>

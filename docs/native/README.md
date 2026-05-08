@@ -4,9 +4,9 @@ Interceptor is the deepest browser automation tool that exists, and it carries t
 
 The native bridge (`interceptor-bridge`) runs as a LaunchAgent and communicates with the daemon over Unix socket. Same CLI vocabulary as the browser side. Same wire format (4-byte LE length prefix + UTF-8 JSON). Same ref system.
 
-## All 28 Domains
+## All 43 Domains
 
-The bridge ships 28 domains across reads, drives, capture, networking, recording, and overlays.
+The bridge ships 43 domains across reads, drives, capture, networking, recording, overlays, document processing, personal data, and distribution. PRD-66 added 14 new domains plus a UN extension to the existing `notifications` surface.
 
 ### Reading the system
 
@@ -60,6 +60,36 @@ The bridge ships 28 domains across reads, drives, capture, networking, recording
 | Text | `interceptor macos text` | Read selection / visible / full text from frontmost app |
 | Compound | `interceptor macos {open, read, act, inspect}` | Single-call agent ergonomics |
 | **Overlay** | `interceptor macos overlay {start, stop, list, status, eval, ctl, verbs}` | Topmost transparent panels — particles (`CAEmitterLayer`), hardcoded Godzilla-vs-Kong (`SpriteKit`), dynamic scene-script (`SpriteKit`), HTML (`WKWebView`). Panic hotkey: `Ctrl+Opt+Cmd+Escape`. See [overlays.md](overlays.md). |
+
+### Documents (PRD-66)
+
+| Domain | CLI prefix | Purpose |
+|---|---|---|
+| **PDF** | `interceptor macos pdf {info,text,outline,annotations,forms,find,merge,split,...}` | PDFKit (PDFDocument/PDFPage/PDFAnnotation/PDFOutline/PDFSelection). See [document.md](document.md). |
+| **Detect** | `interceptor macos detect {types,run,file,stdin}` | NSDataDetector + DDMatch* on macOS 12+. See [document.md](document.md). |
+| **Translate** | `interceptor macos translate {status,languages,availability,prepare,text,batch,file,stop}` | Translation framework (macOS 15+). See [document.md](document.md). |
+| **Thumbnail** | `interceptor macos thumbnail [batch] <path>` | QuickLookThumbnailing. See [document.md](document.md). |
+
+### Personal data (PRD-66; TCC-gated)
+
+| Domain | CLI prefix | Purpose |
+|---|---|---|
+| **Auth** | `interceptor macos auth {status,confirm,invalidate,domain-state}` | LocalAuthentication (Touch ID / Face ID / passcode). See [personal-data.md](personal-data.md). |
+| **Calendar** | `interceptor macos calendar {status,request,list,events,event,create,update,delete,move,...}` | EventKit events. macOS 14+ for `requestFullAccessToEvents`. |
+| **Reminders** | `interceptor macos reminders {status,request,lists,all,incomplete,completed,create,...}` | EventKit reminders. macOS 14+ for `requestFullAccessToReminders`. |
+| **Contacts** | `interceptor macos contacts {status,list,contact,me,find,create,update,delete,vcard,changes,...}` | Contacts framework. CNChangeHistoryFetchRequest macOS 10.15+. |
+| **Photos** | `interceptor macos photos {status,albums,assets,export,thumbnail,favorite,delete,import,changes,...}` | PhotoKit (PHPhotoLibrary, PHAsset, PHFetchOptions). |
+| **Location** | `interceptor macos location {status,current,monitor,geocode,reverse,distance,...}` | CoreLocation + CLGeocoder. |
+| **Music** | `interceptor macos music {status,search,library,song,play,pause,now-playing,...}` | MusicKit (catalog macOS 12+; library + ApplicationMusicPlayer macOS 14+). |
+
+### Distribution (PRD-66)
+
+| Domain | CLI prefix | Purpose |
+|---|---|---|
+| **AppIntent** | `interceptor macos appintent {list,registered,donate,update-parameters,supports}` | AppIntents — 23 declared intents discoverable from Shortcuts/Siri/Spotlight. See [distribution.md](distribution.md). |
+| **Maps** | `interceptor macos maps {search,complete,directions,eta,mapitem-open,reverse}` | MapKit local search + directions + ETA. |
+| **Share** | `interceptor macos share {services,airdrop,email,message,reading-list,desktop-picture,named,text,url}` | NSSharingService — AirDrop / Mail / Messages / etc. |
+| **Notifications (UN extension)** | `interceptor macos notifications {status,request,post,schedule-after,schedule-at,schedule-cron,pending,delivered,cancel,cancel-all,dismiss,dismiss-all,categories,badge}` | UNUserNotificationCenter on top of the existing DistributedNotificationCenter `tail/log` surface. |
 
 ## Bundle (`interceptor-bridge.app`)
 

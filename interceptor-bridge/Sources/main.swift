@@ -9,6 +9,10 @@ Platform.writePID()
 
 let router = Router()
 
+// PRD-66 — expose the router to AppIntents perform() callbacks so declared
+// intents can dispatch into the same domain handlers the CLI uses.
+GlobalRouterRef.shared = router
+
 // Register all domains
 let accessibilityDomain = AccessibilityDomain()
 let appsDomain = AppsDomain()
@@ -41,6 +45,24 @@ let netDomain = NetDomain()
 let logDomain = LogDomain()
 let intentDomain = IntentDomain()
 let containerDomain = ContainerDomain()
+
+// PRD-66 — personal data and distribution domains. Each handler reads
+// `action["sub"]` per the PRD-63 dispatch invariant and is registered
+// against the two-segment action type `macos_<key>_<verb>` below.
+let pdfDomain = PdfDomain()
+let detectDomain = DetectDomain()
+let translateDomain = TranslateDomain()
+let thumbnailDomain = ThumbnailDomain()
+let authDomain = AuthDomain()
+let calendarDomain = CalendarDomain()
+let remindersDomain = RemindersDomain()
+let contactsDomain = ContactsDomain()
+let appIntentDomain = AppIntentDomain()
+let photosDomain = PhotosDomain()
+let mapsDomain = MapsDomain()
+let locationDomain = LocationDomain()
+let musicDomain = MusicDomain()
+let shareDomain = ShareDomain()
 
 router.register("tree", handler: accessibilityDomain)
 router.register("find", handler: accessibilityDomain)
@@ -89,6 +111,22 @@ router.register("url", handler: netDomain)
 router.register("log", handler: logDomain)
 router.register("intent", handler: intentDomain)
 router.register("container", handler: containerDomain)
+
+// PRD-66 — register the 14 new domain keys.
+router.register("pdf", handler: pdfDomain)
+router.register("detect", handler: detectDomain)
+router.register("translate", handler: translateDomain)
+router.register("thumbnail", handler: thumbnailDomain)
+router.register("auth", handler: authDomain)
+router.register("calendar", handler: calendarDomain)
+router.register("reminders", handler: remindersDomain)
+router.register("contacts", handler: contactsDomain)
+router.register("appintent", handler: appIntentDomain)
+router.register("photos", handler: photosDomain)
+router.register("maps", handler: mapsDomain)
+router.register("location", handler: locationDomain)
+router.register("music", handler: musicDomain)
+router.register("share", handler: shareDomain)
 
 do {
     let transport = try Transport(router: router)

@@ -492,12 +492,29 @@ export function parseMacosCommand(filtered: string[]): Action | null {
     // ── Notifications ──
     case "notifications": {
       const op = filtered[2] || "tail"
-      return {
-        type: "macos_notifications",
-        sub: op,
-        app: flagVal(filtered, "--app"),
-        limit: flagInt(filtered, "--limit"),
+      const action: Action = { type: "macos_notifications", sub: op }
+      // legacy DistributedNotificationCenter flags
+      const app = flagVal(filtered, "--app"); if (app) action.app = app
+      const limit = flagInt(filtered, "--limit"); if (limit !== undefined) action.limit = limit
+      // PRD-66 — UNUserNotificationCenter flags. Numeric flags must be
+      // int-typed because the bridge handler casts with `as? Int` and a
+      // string value silently drops to nil (NotificationsDomain.swift:297
+      // — `--seconds <N> required` fires even when --seconds 5 is passed).
+      for (const flag of ["--title","--subtitle","--body","--sound","--category","--thread","--user-info","--interruption","--attachment","--date","--components","--id","--options","--identifier","--actions","--intent-identifiers","--summary-format","--hidden-placeholder"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
       }
+      const nSeconds = flagInt(filtered, "--seconds"); if (nSeconds !== undefined) action.seconds = nSeconds
+      const nBadge = flagInt(filtered, "--badge"); if (nBadge !== undefined) action.badge = nBadge
+      const nCount = flagInt(filtered, "--count"); if (nCount !== undefined) action.count = nCount
+      if (filtered.includes("--repeats")) action.repeats = true
+      // sub-sub-verb on `categories` and `badge clear`
+      if (op === "categories") action.verb = filtered[3]
+      if (op === "badge" && filtered[3] === "clear") action.clear = true
+      else if (op === "badge" && filtered[3]) action.count = parseInt(filtered[3])
+      // identifier positional for cancel / dismiss
+      if ((op === "cancel" || op === "dismiss") && filtered[3]) action.id = filtered[3]
+      return action
     }
 
     // ── Clipboard ──
@@ -962,6 +979,304 @@ export function parseMacosCommand(filtered: string[]): Action | null {
           console.error(`error: unknown 'overlay' subcommand '${overlaySub}'. Use: start | stop | list | status | eval | ctl | verbs`)
           process.exit(1)
       }
+    }
+
+    // ── PRD-66 — Personal data + distribution + document surfaces ──
+    // Each branch maps `interceptor macos <domain> <verb> [...]` to a
+    // `macos_<domain>` action with `sub` carrying the verb (PRD-63 invariant).
+
+    case "pdf": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: pdf requires a verb (info|text|outline|annotations|forms|images|find|attributes|permissions|annotate|strip|merge|split)"); process.exit(1) }
+      const action: Action = { type: "macos_pdf", sub: verb }
+      if (verb === "merge") {
+        const out = flagVal(filtered, "--out")
+        const paths = collectPositionals(filtered, 3, new Set(["--out"]))
+        if (!out || paths.length === 0) { console.error("error: pdf merge <path...> --out <out>"); process.exit(1) }
+        action.paths = paths
+        action.out = out
+      } else if (verb === "forms") {
+        const sub2 = filtered[3]
+        if (sub2 === "set") {
+          action.sub = "forms_set"
+          const path = filtered[4]
+          if (!path) { console.error("error: pdf forms set <path> --field <name> --value <string> [--out <out>]"); process.exit(1) }
+          action.path = path
+          action.field = flagVal(filtered, "--field")
+          action.value = flagVal(filtered, "--value")
+          action.out = flagVal(filtered, "--out")
+        } else {
+          const path = filtered[3]
+          if (!path) { console.error("error: pdf forms <path>"); process.exit(1) }
+          action.path = path
+        }
+      } else {
+        const path = filtered[3]
+        if (!path) { console.error(`error: pdf ${verb} requires <path>`); process.exit(1) }
+        action.path = path
+        const page = flagInt(filtered, "--page"); if (page !== undefined) action.page = page
+        const range = flagVal(filtered, "--range"); if (range) action.range = range
+        if (filtered.includes("--attributed")) action.attributed = true
+        if (filtered.includes("--case-sensitive")) action.case_sensitive = true
+        const type = flagVal(filtered, "--type"); if (type) action.annotation_type = type
+        if (verb === "find") action.query = filtered[4]
+        if (verb === "annotate") {
+          action.rect = flagVal(filtered, "--rect")
+          action.contents = flagVal(filtered, "--contents")
+          action.out = flagVal(filtered, "--out")
+        }
+        if (verb === "strip") action.out = flagVal(filtered, "--out")
+        if (verb === "split") {
+          action.pages = flagVal(filtered, "--pages")
+          action.out = flagVal(filtered, "--out")
+        }
+      }
+      return action
+    }
+
+    case "detect": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: detect requires a verb (types|run|file|stdin)"); process.exit(1) }
+      const action: Action = { type: "macos_detect", sub: verb }
+      if (verb === "run") action.input = filtered[3]
+      else if (verb === "file") action.path = filtered[3]
+      else if (verb === "stdin") {
+        // Bridge handler reads action["input"]; CLI must wrap stdin into it.
+        const buf = require("node:fs").readFileSync(0, "utf8")
+        action.input = buf
+      }
+      const types = flagVal(filtered, "--types"); if (types) action.types = types
+      return action
+    }
+
+    case "translate": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: translate requires a verb (status|languages|availability|prepare|text|batch|file|stop)"); process.exit(1) }
+      const action: Action = { type: "macos_translate", sub: verb }
+      const from = flagVal(filtered, "--from"); if (from) action.from = from
+      const to = flagVal(filtered, "--to"); if (to) action.to = to
+      const sample = flagVal(filtered, "--sample"); if (sample) action.sample = sample
+      const json = flagVal(filtered, "--json"); if (json) action.json = json
+      if (verb === "text") action.input = filtered[3]
+      else if (verb === "file") action.path = filtered[3]
+      return action
+    }
+
+    case "thumbnail": {
+      const verb = filtered[2] === "batch" ? "batch" : "generate"
+      const action: Action = { type: "macos_thumbnail", sub: verb }
+      if (verb === "batch") {
+        const paths = collectPositionals(filtered, 3, new Set(["--size","--scale","--types","--format","--out"]))
+        action.paths = paths
+      } else {
+        const path = filtered[2]
+        if (!path) { console.error("error: thumbnail <path> [--size N] [--scale N] [--types ...] [--save] [--out <path>] [--format png|jpeg|heic]"); process.exit(1) }
+        action.path = path
+      }
+      const size = flagVal(filtered, "--size"); if (size) action.size = size
+      const scale = flagInt(filtered, "--scale"); if (scale !== undefined) action.scale = scale
+      const types = flagVal(filtered, "--types"); if (types) action.types = types
+      const format = flagVal(filtered, "--format"); if (format) action.format = format
+      if (filtered.includes("--save")) action.save = true
+      const out = flagVal(filtered, "--out"); if (out) action.out = out
+      return action
+    }
+
+    case "auth": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: auth requires a verb (status|confirm|invalidate|domain-state)"); process.exit(1) }
+      const action: Action = { type: "macos_auth", sub: verb }
+      if (verb === "confirm") action.reason = filtered[3]
+      const policy = flagVal(filtered, "--policy"); if (policy) action.policy = policy
+      const fb = flagVal(filtered, "--fallback-title"); if (fb) action.fallback_title = fb
+      const cancel = flagVal(filtered, "--cancel-title"); if (cancel) action.cancel_title = cancel
+      const reuse = flagInt(filtered, "--reuse"); if (reuse !== undefined) action.reuse_seconds = reuse
+      return action
+    }
+
+    case "calendar": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: calendar requires a verb (status|request|list|default|sources|create-calendar|delete-calendar|events|event|event-by-external|create|update|delete|move|refresh-sources|reset|tail)"); process.exit(1) }
+      const action: Action = { type: "macos_calendar", sub: verb }
+      // common flags. NB: --type would collide with the action envelope's
+      // `type` field (which dispatches the action), so we remap it to
+      // `cal_type` and read it as such on the bridge side.
+      for (const flag of ["--level","--title","--color","--start","--end","--calendar","--calendars","--all-day","--location","--notes","--url","--span","--to","--recurrence-frequency","--recurrence-interval","--recurrence-end"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
+      }
+      const calType = flagVal(filtered, "--type")
+      if (calType !== undefined) action.cal_type = calType
+      if (filtered.includes("--all-day")) action.all_day = true
+      // alarms (multiple), attendees (multiple)
+      action.alarms = filtered.reduce<string[]>((acc, v, i) => filtered[i - 1] === "--alarm" ? acc.concat(v) : acc, [])
+      action.attendees = filtered.reduce<string[]>((acc, v, i) => filtered[i - 1] === "--attendee" ? acc.concat(v) : acc, [])
+      // positional id args (after verb)
+      const positional = filtered[3]
+      if (verb === "delete-calendar" || verb === "event" || verb === "event-by-external" || verb === "update" || verb === "delete" || verb === "move") {
+        if (positional) action.id = positional
+      }
+      return action
+    }
+
+    case "reminders": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: reminders requires a verb (status|request|lists|default|all|incomplete|completed|create|update|complete|uncomplete|delete)"); process.exit(1) }
+      const action: Action = { type: "macos_reminders", sub: verb }
+      for (const flag of ["--list","--due-start","--due-end","--since","--until","--title","--due","--start","--priority","--notes","--url"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
+      }
+      const positional = filtered[3]
+      if (["update","complete","uncomplete","delete"].includes(verb) && positional) action.id = positional
+      return action
+    }
+
+    case "contacts": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: contacts requires a verb (status|request|containers|default-container|groups|group|group-create|group-update|group-delete|group-add-member|group-remove-member|list|contact|me|find|create|update|delete|vcard|import-vcard|current-token|changes)"); process.exit(1) }
+      const action: Action = { type: "macos_contacts", sub: verb }
+      // String flags only. --limit and --offset are integers — see below.
+      // Without the int conversion the Swift handler's `as? Int` cast fails
+      // on strings, silently treating limit=undefined and serializing every
+      // contact (verified — caused 15s timeouts on the list verb).
+      for (const flag of ["--keys","--container","--group","--name","--email","--phone","--given","--family","--organization","--postal","--birthday","--note","--since","--contact"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
+      }
+      const cLimit = flagInt(filtered, "--limit"); if (cLimit !== undefined) action.limit = cLimit
+      const cOffset = flagInt(filtered, "--offset"); if (cOffset !== undefined) action.offset = cOffset
+      const positional = filtered[3]
+      if (positional && !positional.startsWith("--")) action.id = positional
+      // Free-text query for find
+      if (verb === "find" && filtered[3] && !filtered[3].startsWith("--")) action.query = filtered[3]
+      if (verb === "import-vcard") action.path = filtered[3]
+      if (verb === "vcard") action.id = filtered[3]
+      return action
+    }
+
+    case "appintent": {
+      const verb = filtered[2] || "list"
+      const action: Action = { type: "macos_appintent", sub: verb }
+      if (verb === "donate") action.intent_id = filtered[3]
+      return action
+    }
+
+    case "photos": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: photos requires a verb (status|request|albums|album|album-create|album-delete|album-rename|assets|asset|export|export-video|export-live|thumbnail|favorite|hide|delete|add-to-album|remove-from-album|import|import-video|current-token|changes)"); process.exit(1) }
+      const action: Action = { type: "macos_photos", sub: verb }
+      // --type collides with the action envelope's `type` dispatch field;
+      // remap to album_type. --limit/--offset must be int-typed because
+      // PhotosDomain casts them with `as? Int` (verified — string casts
+      // silently drop the value, causing accidental full-library fetches).
+      for (const flag of ["--level","--name","--media","--subtype","--since","--until","--where","--out","--size","--asset","--file","--album","--token"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
+      }
+      const pType = flagVal(filtered, "--type")
+      if (pType !== undefined) action.album_type = pType
+      const pLimit = flagInt(filtered, "--limit"); if (pLimit !== undefined) action.limit = pLimit
+      const pOffset = flagInt(filtered, "--offset"); if (pOffset !== undefined) action.offset = pOffset
+      if (filtered.includes("--favorite")) action.favorite = true
+      if (filtered.includes("--hidden")) action.hidden = true
+      if (filtered.includes("--burst")) action.burst = true
+      if (filtered.includes("--save")) action.save = true
+      if (filtered.includes("--on")) action.on = true
+      if (filtered.includes("--off")) action.on = false
+      const positional = filtered[3]
+      if (positional && !positional.startsWith("--")) action.id = positional
+      return action
+    }
+
+    case "maps": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: maps requires a verb (search|complete|directions|eta|mapitem-open|reverse)"); process.exit(1) }
+      const action: Action = { type: "macos_maps", sub: verb }
+      if (verb === "search" || verb === "complete") action.query = filtered[3]
+      if (verb === "reverse") action.coords = filtered[3]
+      if (verb === "mapitem-open") action.id = filtered[3]
+      for (const flag of ["--region","--types","--poi-categories","--address-include","--address-exclude","--limit","--from","--to","--transport"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
+      }
+      if (filtered.includes("--requests-alternates")) action.requests_alternates = true
+      return action
+    }
+
+    case "location": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: location requires a verb (status|request|request-temporary-accuracy|current|monitor|significant|visits|heading|geocode|reverse|distance|postal-geocode)"); process.exit(1) }
+      const action: Action = { type: "macos_location", sub: verb }
+      // Sub-sub verbs (start/stop/tail) for monitor / significant / visits / heading
+      if (["monitor","significant","visits","heading"].includes(verb)) {
+        const sub2 = filtered[3]
+        if (!sub2) { console.error(`error: location ${verb} requires start|stop${verb === "monitor" ? "|tail" : ""}`); process.exit(1) }
+        action.sub = `${verb}_${sub2}`
+      }
+      if (verb === "geocode") action.address = filtered[3]
+      if (verb === "reverse") action.coords = filtered[3]
+      if (verb === "postal-geocode") action.postal = filtered[3]
+      for (const flag of ["--level","--purpose","--accuracy","--region","--locale","--from","--to"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
+      }
+      return action
+    }
+
+    case "music": {
+      const verb = filtered[2]
+      // Catalog verbs (search/search-suggest/charts/recommendations and the
+      // song/album/artist/playlist by-catalog-id fetchers) require an Apple
+      // Developer MusicKit team key, which interceptor-bridge does not ship
+      // with. Apple's MusicCatalog* APIs return "Failed to request developer
+      // token" without it. Removed from the verb surface; only library,
+      // subscription state, and playback control remain.
+      if (!verb) { console.error("error: music requires a verb (status|request|subscription|library|library-search|play|pause|resume|stop|next|previous|seek|queue|repeat|shuffle|now-playing)"); process.exit(1) }
+      const action: Action = { type: "macos_music", sub: verb }
+      if (["library-search"].includes(verb)) action.term = filtered[3]
+      if (verb === "repeat" || verb === "shuffle") action.mode = filtered[3]
+      for (const flag of ["--types","--limit","--offset","--filter","--sort","--song","--playlist","--time","--kind"]) {
+        const val = flagVal(filtered, flag)
+        if (val !== undefined) action[flag.replace(/^--/, "").replace(/-/g, "_")] = val
+      }
+      if (filtered.includes("--top")) action.top = true
+      if (filtered.includes("--ascending")) action.ascending = true
+      if (filtered.includes("--include-tracks")) action.include_tracks = true
+      if (filtered.includes("--include-system")) action.include_system = true
+      return action
+    }
+
+    case "share": {
+      const verb = filtered[2]
+      if (!verb) { console.error("error: share requires a verb (services|airdrop|email|message|reading-list|desktop-picture|named|text|url)"); process.exit(1) }
+      const action: Action = { type: "macos_share", sub: verb }
+      if (verb === "named") {
+        // Positional form: `share named <service> [items]`. Skip when the
+        // first positional is actually a flag (`--service ...`); that case
+        // is handled by the flagVal pass below.
+        if (filtered[3] && !filtered[3].startsWith("--")) {
+          action.service = filtered[3]
+          if (filtered[4] && !filtered[4].startsWith("--")) action.items = filtered[4].split(",")
+        }
+      } else if (verb === "text" || verb === "url") {
+        action.value = filtered[3]
+      } else if (verb !== "services") {
+        const items = filtered[3]
+        if (items && !items.startsWith("--")) action.items = items.split(",")
+      }
+      const recipient = flagVal(filtered, "--recipient"); if (recipient) action.recipient = recipient
+      const recipients = flagVal(filtered, "--to") || flagVal(filtered, "--recipients"); if (recipients) action.recipients = recipients.split(",")
+      const subject = flagVal(filtered, "--subject"); if (subject) action.subject = subject
+      const body = flagVal(filtered, "--body"); if (body) action.body = body
+      const service = flagVal(filtered, "--service"); if (service) action.service = service
+      const forItem = flagVal(filtered, "--for"); if (forItem) action.for_item = forItem
+      // Canned verbs (airdrop / email / message / reading-list / desktop-picture)
+      // can also accept content via --text or --url. Bridge resolveItems()
+      // unifies items / text / url / body into a single payload.
+      const text = flagVal(filtered, "--text"); if (text) action.text = text
+      const url = flagVal(filtered, "--url"); if (url) action.url = url
+      return action
     }
 
     default:

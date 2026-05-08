@@ -332,4 +332,51 @@ Native (macOS Bridge — full install only):
                                                    not_determined unobservable per Apple API).
   interceptor macos trust --screen-prompt    Prompt only Screen Recording (same Apple constraint).
   interceptor macos trust --microphone-prompt   Prompt only Microphone (only surface where Apple
-                                                exposes notDetermined / restricted).`
+                                                exposes notDetermined / restricted).
+
+  PRD-66 — Personal data, distribution, and document domains:
+
+  Documents (no TCC):
+  interceptor macos pdf info|text|outline|annotations|forms|images|find|attributes|permissions|annotate|strip|merge|split <path>
+  interceptor macos pdf forms set <path> --field <name> --value <string> [--out <out>]
+  interceptor macos pdf find <path> "<query>" [--case-sensitive]
+  interceptor macos pdf merge <p1> <p2> ... --out <out>
+  interceptor macos pdf split <path> --pages <range> --out <out>
+  interceptor macos detect types | run "<text>" | file <path>            (NSDataDetector + DDMatch* on macOS 12+)
+  interceptor macos detect run "<text>" [--types link,phone,address,email,calendarEvent,money,flight,shipping]
+  interceptor macos translate status|languages|availability|prepare|text|batch|file|stop    (Translation, macOS 15+)
+  interceptor macos translate text "<text>" --from <bcp47> --to <bcp47>
+  interceptor macos thumbnail <path> [--size N|WxH] [--scale N] [--types icon,thumbnail,lowQuality] [--save] [--out <path>] [--format png|jpeg|heic]
+  interceptor macos thumbnail batch <p1> <p2> ... [--size N]
+
+  Personal data (TCC-gated):
+  interceptor macos auth status|confirm|invalidate|domain-state                   (LocalAuthentication)
+  interceptor macos auth confirm "<reason>" [--policy biometry|any|biometry-or-watch] [--reuse <seconds>]
+  interceptor macos calendar status|request|list|default|sources|create-calendar|delete-calendar|events|event|create|update|delete|move|refresh-sources|reset|tail   (EventKit events)
+  interceptor macos calendar create --title "..." --start <ISO8601> --end <ISO8601> [--calendar <id>] [--all-day] [--alarm <offset|absolute>]
+  interceptor macos reminders status|request|lists|default|all|incomplete|completed|create|update|complete|uncomplete|delete   (EventKit reminders)
+  interceptor macos contacts status|request|containers|groups|list|contact|me|find|create|update|delete|vcard|import-vcard|current-token|changes
+  interceptor macos contacts find "<query>" | --email <addr> | --phone <num>
+  interceptor macos photos status|request|albums|album|assets|asset|export|export-video|export-live|thumbnail|favorite|hide|delete|add-to-album|remove-from-album|import|import-video|current-token|changes
+  interceptor macos location status|request|request-temporary-accuracy|current|monitor|significant|visits|heading|geocode|reverse|distance|postal-geocode
+  interceptor macos location current                                              (one-shot CLLocationManager.requestLocation)
+  interceptor macos location reverse <lat,lng>
+  interceptor macos music status|request|subscription|search|search-suggest|charts|recommendations|library|library-search|song|album|artist|playlist|play|pause|resume|stop|next|previous|seek|queue|repeat|shuffle|now-playing
+  interceptor macos music search "<term>" [--types song,album,artist,playlist,curator,genre]
+  interceptor macos music library --type song|album|artist|playlist|track [--filter ...] [--sort ...]
+
+  Distribution:
+  interceptor macos appintent list|registered|donate|update-parameters|supports   (AppIntents — macOS 13+)
+  interceptor macos maps search "<query>" [--region lat,lng,latSpan,lngSpan] [--types address,pointOfInterest,physicalFeature]
+  interceptor macos maps directions --from "<addr>" --to "<addr>" [--transport auto|walking|transit|any]
+  interceptor macos maps eta --from "<addr>" --to "<addr>"
+  interceptor macos share services [--for <path>]
+  interceptor macos share airdrop <path> [--recipient "<handle>"]
+  interceptor macos share email <path> [--to a@x,b@y] [--subject "..."] [--body "..."]
+  interceptor macos share message <path> [--to <handle>] [--body "..."]
+  interceptor macos share named <service-name> <path>
+
+  Notifications (UN extension to existing notifications domain):
+  interceptor macos notifications status|request|settings|post|schedule-after|schedule-at|schedule-cron|cancel|cancel-all|pending|delivered|dismiss|dismiss-all
+  interceptor macos notifications post --title "..." --body "..." [--sound default] [--badge N] [--category <id>]
+  interceptor macos notifications categories list|register|clear`

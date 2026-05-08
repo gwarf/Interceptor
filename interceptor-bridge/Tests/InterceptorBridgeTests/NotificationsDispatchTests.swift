@@ -50,4 +50,88 @@ final class NotificationsDispatchTests: XCTestCase {
         let err = (r["error"] as? String) ?? ""
         XCTAssertTrue(err.contains("unknownop"), "Error should reference the unknown sub")
     }
+
+    // PRD-66 — UNUserNotificationCenter dispatch tests.
+    //
+    // The xctest runner has no .app bundle, so UNUserNotificationCenter.current()
+    // raises NSInternalInconsistencyException. Production code runs inside the
+    // Interceptor.app bundle and reaches the live UN center; the bridge guards
+    // every UN entry point with `unGuard` and returns a structured error here.
+    // Tests below assert dispatch reaches the handler and returns either the
+    // live success or the bundle-absence error — never `notImplemented`.
+
+    private func reachesUnHandler(_ result: [String: Any]) -> Bool {
+        if !isNotImplemented(result) { return true }
+        return false
+    }
+
+    func testUnStatus_dispatchesToHandler() {
+        let r = dispatch(sub: "status")
+        XCTAssertTrue(reachesUnHandler(r))
+    }
+
+    func testUnPost_dispatchesToHandler() {
+        let r = dispatch(sub: "post", extra: ["title": "Test", "body": "Hello"])
+        XCTAssertTrue(reachesUnHandler(r))
+    }
+
+    func testUnScheduleAfter_missingSeconds_errors() {
+        let r = dispatch(sub: "schedule-after", extra: ["title": "x", "body": "y"])
+        XCTAssertEqual(r["success"] as? Bool, false)
+    }
+
+    func testUnScheduleAt_missingDate_errors() {
+        let r = dispatch(sub: "schedule-at", extra: ["title": "x", "body": "y"])
+        XCTAssertEqual(r["success"] as? Bool, false)
+    }
+
+    func testUnScheduleCron_missingComponents_errors() {
+        let r = dispatch(sub: "schedule-cron", extra: ["title": "x", "body": "y"])
+        XCTAssertEqual(r["success"] as? Bool, false)
+    }
+
+    func testUnCancel_missingId_errors() {
+        let r = dispatch(sub: "cancel")
+        XCTAssertEqual(r["success"] as? Bool, false)
+    }
+
+    func testUnCancelAll_dispatchesToHandler() {
+        let r = dispatch(sub: "cancel-all")
+        XCTAssertTrue(reachesUnHandler(r))
+    }
+
+    func testUnPending_dispatchesToHandler() {
+        let r = dispatch(sub: "pending")
+        XCTAssertTrue(reachesUnHandler(r))
+    }
+
+    func testUnDelivered_dispatchesToHandler() {
+        let r = dispatch(sub: "delivered")
+        XCTAssertTrue(reachesUnHandler(r))
+    }
+
+    func testUnDismiss_missingId_errors() {
+        let r = dispatch(sub: "dismiss")
+        XCTAssertEqual(r["success"] as? Bool, false)
+    }
+
+    func testUnDismissAll_dispatchesToHandler() {
+        let r = dispatch(sub: "dismiss-all")
+        XCTAssertTrue(reachesUnHandler(r))
+    }
+
+    func testUnCategoriesList_dispatchesToHandler() {
+        let r = dispatch(sub: "categories", extra: ["verb": "list"])
+        XCTAssertTrue(reachesUnHandler(r))
+    }
+
+    func testUnCategoriesRegister_missingFields_errors() {
+        let r = dispatch(sub: "categories", extra: ["verb": "register"])
+        XCTAssertEqual(r["success"] as? Bool, false)
+    }
+
+    func testUnCategoriesClear_dispatchesToHandler() {
+        let r = dispatch(sub: "categories", extra: ["verb": "clear"])
+        XCTAssertTrue(reachesUnHandler(r))
+    }
 }

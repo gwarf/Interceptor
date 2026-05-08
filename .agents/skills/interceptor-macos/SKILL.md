@@ -168,7 +168,7 @@ Everything else the bridge supports — same agent-first contract, used less fre
 - Vision (`vision faces/text/hands/bodies`)
 - NLP (`nlp entities/sentiment/language`)
 - Apple Intelligence (`ai prompt`, macOS 26+)
-- Notifications (`notifications tail`)
+- Notifications (`notifications tail/log` + UN `post/schedule-*/pending/delivered/categories/badge` per PRD-66)
 - Trust & Permissions (`trust`)
 - Files & Filesystem (`files`, `fs`)
 - URL Fetch (`url get/post`)
@@ -178,6 +178,46 @@ Everything else the bridge supports — same agent-first contract, used less fre
 - Display & Streaming (`display`, `stream`)
 - Text (`text` — selection / visible / full from frontmost app)
 - Overlays (particles / titans / scene-script / HTML HUD)
+
+PRD-66 — Documents:
+- **PDF** (`pdf info|text|outline|annotations|forms|find|merge|split|...`) — PDFKit
+- **Detect** (`detect types|run|file`) — NSDataDetector + DDMatch on macOS 12+
+- **Translate** (`translate text|languages|availability|prepare|batch|file`) — Translation framework, macOS 15+
+- **Thumbnail** (`thumbnail [batch] <path>`) — QuickLookThumbnailing
+
+PRD-66 — Personal data (TCC-gated):
+- **Auth** (`auth status|confirm|invalidate|domain-state`) — LocalAuthentication (Touch ID / Face ID / passcode)
+- **Calendar** (`calendar status|list|events|create|update|delete|move|...`) — EventKit events; `request --level full|write` (macOS 14+)
+- **Reminders** (`reminders status|all|incomplete|completed|create|complete|uncomplete|delete`) — EventKit reminders; full-access only
+- **Contacts** (`contacts status|list|find|create|update|delete|vcard|changes|...`) — Contacts framework; CNChangeHistoryFetchRequest macOS 10.15+
+- **Photos** (`photos status|albums|assets|export|thumbnail|favorite|delete|import|changes`) — PhotoKit
+- **Location** (`location status|current|geocode|reverse|distance|monitor|...`) — CoreLocation + CLGeocoder
+- **Music** (`music search|library|play|pause|now-playing|...`) — MusicKit; ApplicationMusicPlayer macOS 14+, SystemMusicPlayer iOS-only
+
+PRD-66 — Distribution:
+- **AppIntent** (`appintent list|registered|donate|update-parameters|supports`) — 23 declared AppIntents discoverable from Shortcuts/Siri/Spotlight
+- **Maps** (`maps search|directions|eta|complete|reverse`) — MapKit
+- **Share** (`share services|airdrop|email|message|named|text|url`) — NSSharingService
+
+### Background-safe inventory additions (PRD-66)
+
+| Verb | Background-safe? | Notes |
+|---|---|---|
+| `pdf *` | ✅ | Local file I/O; no app activation. |
+| `detect *` | ✅ | Local string processing. |
+| `translate text/batch/file/availability/languages` | ✅ | TranslationSession runs in-process on macOS 15+. |
+| `thumbnail *` | ✅ | QuickLookThumbnailing.shared returns thumbnails without UI. |
+| `auth confirm "<reason>"` | ⚠️ | LAContext.evaluatePolicy presents a Touch ID / Face ID prompt — modal but does not change frontmost. |
+| `calendar *`, `reminders *`, `contacts *`, `photos *` | ✅ | Pure framework reads/writes; no app activation. First-run TCC dialog is the only UI. |
+| `location current/geocode/reverse/distance` | ✅ | CLGeocoder + one-shot CLLocationManager.requestLocation; no UI. |
+| `music search/library/song/album/artist/playlist` | ✅ | Catalog and library reads. |
+| `music play/pause/resume/stop/next/previous/seek/now-playing` | ✅ | ApplicationMusicPlayer plays inside the bridge process; macOS Music.app stays untouched. |
+| `appintent *` | ✅ | Runtime introspection only. Declared intents fire from Shortcuts/Siri/Spotlight, never from the bridge directly. |
+| `maps search/complete/directions/eta/reverse` | ✅ | Network calls; no UI. |
+| `maps mapitem-open` | ⚠️ | Opens Maps.app; activates Maps. Use only when the user asked for it. |
+| `share services` | ✅ | Read-only enumeration. |
+| `share airdrop/email/message/...` | ⚠️ | OS-rendered share sheet may surface above the bridge; bridge frontmost stays unchanged. |
+| `notifications post/schedule-*/cancel/dismiss/...` | ✅ | UNUserNotificationCenter; banner appears OS-side. |
 
 See `references/advanced-domains.md` for the deep dive on each.
 

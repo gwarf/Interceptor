@@ -1111,6 +1111,48 @@ interceptor macos text                           # Read selection / visible / fu
 
 Particles / titans / scene-script / HTML overlays. Panic hotkey `Ctrl+Opt+Cmd+Escape` closes every active overlay regardless of session. See [`docs/native/overlays.md`](docs/native/overlays.md) and [`docs/native/scene-script-cookbook.md`](docs/native/scene-script-cookbook.md).
 
+#### Documents (PRD-66)
+
+```bash
+interceptor macos pdf info|text|outline|annotations|forms|images|find|attributes|permissions|annotate|strip|merge|split <path>
+interceptor macos pdf forms set <path> --field <name> --value <string> [--out <out>]
+interceptor macos pdf find <path> "<query>" [--case-sensitive]
+interceptor macos pdf merge <p1> <p2> ... --out <out>
+interceptor macos pdf split <path> --pages 1-5 --out <out>
+interceptor macos detect types | run "<text>" | file <path>
+interceptor macos translate text "<text>" --from <bcp47> --to <bcp47>            # macOS 15+
+interceptor macos thumbnail <path> [--size N|WxH] [--save] [--out <path>] [--format png|jpeg|heic]
+```
+
+See [`docs/native/document.md`](docs/native/document.md) for PDFKit / DataDetection / Translation / QuickLookThumbnailing.
+
+#### Personal data (PRD-66; TCC-gated)
+
+```bash
+interceptor macos auth confirm "<reason>" [--policy biometry|any|biometry-or-watch] [--reuse N]
+interceptor macos calendar status|request|list|default|events|event|create|update|delete|move
+interceptor macos reminders status|request|lists|all|incomplete|completed|create|update|complete|uncomplete|delete
+interceptor macos contacts status|list|contact|me|find|create|update|delete|vcard|changes
+interceptor macos photos status|albums|assets|asset|export|export-video|thumbnail|favorite|delete|add-to-album|import|changes
+interceptor macos location status|current|monitor|geocode|reverse|distance
+interceptor macos music status|search|library|song|album|play|pause|resume|stop|next|previous|now-playing
+```
+
+See [`docs/native/personal-data.md`](docs/native/personal-data.md).
+
+#### Distribution (PRD-66)
+
+```bash
+interceptor macos appintent list|registered|donate|update-parameters|supports
+interceptor macos maps search "<query>" | directions --from "<a>" --to "<b>" [--transport mode] | eta
+interceptor macos share services|airdrop|email|message|reading-list|desktop-picture|named|text|url
+interceptor macos notifications post --title "..." --body "..." [--sound default] [--badge N]
+interceptor macos notifications schedule-after --seconds N | schedule-at --date <ISO>
+interceptor macos notifications pending|delivered|cancel|cancel-all|dismiss|dismiss-all|categories|badge
+```
+
+See [`docs/native/distribution.md`](docs/native/distribution.md).
+
 ## macOS Recipes
 
 ### Resize browser and open a URL

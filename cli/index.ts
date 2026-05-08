@@ -78,11 +78,20 @@ async function main() {
   const anyTab = args.includes("--any-tab")
   const globalTabId = parseTabFlag(args)
 
-  // Build filtered args (strip global flags)
+  // Build filtered args (strip global flags). NB: --json is dual-purpose —
+  // it can be a global "emit JSON output" boolean OR a domain-specific
+  // value flag (e.g. `translate batch --json '["a","b"]'`). Disambiguate
+  // by position: `--json` at index 0 or 1 is the global boolean (it's
+  // always near the front, like `interceptor --json status`); deeper
+  // occurrences are always domain value flags consumed by the parser.
   const tabIdx = args.indexOf("--tab")
-  const tabFilterSet = new Set(["--json", "--ws", "--any-tab"])
+  const tabFilterSet = new Set(["--ws", "--any-tab"])
   if (tabIdx !== -1) { tabFilterSet.add("--tab"); if (args[tabIdx + 1]) tabFilterSet.add(args[tabIdx + 1]) }
-  const filtered = args.filter(a => !tabFilterSet.has(a))
+  const filtered = args.filter((a, i) => {
+    if (tabFilterSet.has(a)) return false
+    if (a === "--json") return i > 1
+    return true
+  })
 
   if (filtered.length === 0 || filtered[0] === "help") {
     console.log(HELP)

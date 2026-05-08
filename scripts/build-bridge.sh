@@ -119,6 +119,51 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>NSMicrophoneUsageDescription</key>
     <string>interceptor-bridge captures microphone input when you ask Interceptor to use listen / audio commands.</string>
 
+    <!-- PRD-66 — personal data and distribution surfaces.
+         Each TCC-gated framework gets a usage description string that surfaces
+         in the system consent dialog. Strings follow Apple's recommended shape
+         (verb + reason). Both modern (macOS 14+) and legacy keys are present
+         so the bridge stays safe across deployment targets. -->
+
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>interceptor-bridge reads, creates, and modifies your calendar events under your direction (mac_calendar verbs).</string>
+    <key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+    <string>interceptor-bridge creates calendar events under your direction (mac_calendar create).</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>interceptor-bridge reads and modifies your calendar events under your direction (legacy fallback for macOS &lt; 14).</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>interceptor-bridge reads, creates, and modifies your reminders under your direction (mac_reminders verbs).</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>interceptor-bridge reads and modifies your reminders under your direction (legacy fallback for macOS &lt; 14).</string>
+    <key>NSContactsUsageDescription</key>
+    <string>interceptor-bridge reads and modifies your contacts under your direction (mac_contacts verbs).</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>interceptor-bridge reads, exports, and modifies your Photos library under your direction (mac_photos verbs).</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>interceptor-bridge adds photos and videos to your library under your direction (mac_photos import).</string>
+    <key>NSLocationUsageDescription</key>
+    <string>interceptor-bridge uses location data for geocoding and current-position queries under your direction (mac_location verbs).</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>interceptor-bridge uses your location for geocoding and current-position queries under your direction (mac_location verbs).</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>interceptor-bridge uses your location for geocoding and current-position queries under your direction (mac_location verbs).</string>
+    <!-- Per Apple's NSLocationTemporaryUsageDescriptionDictionary doc:
+         CLLocationManager.requestTemporaryFullAccuracyAuthorization(withPurposeKey:)
+         resolves the supplied key against this dictionary. Without a matching
+         entry, the call returns kCLErrorPromptDeclined (CLError 18) silently.
+         The keys here are the purpose tokens callers pass via --purpose. -->
+    <key>NSLocationTemporaryUsageDescriptionDictionary</key>
+    <dict>
+        <key>PreciseGeocode</key>
+        <string>interceptor-bridge briefly requests precise location to resolve a precise geocode or current-position query you triggered.</string>
+        <key>PreciseDirections</key>
+        <string>interceptor-bridge briefly requests precise location to compute accurate routing or distance for a query you triggered.</string>
+    </dict>
+    <key>NSAppleMusicUsageDescription</key>
+    <string>interceptor-bridge accesses your Apple Music library and plays back catalog items under your direction (mac_music verbs).</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>interceptor-bridge uses Face ID / Touch ID to confirm sensitive actions before performing them (mac_auth confirm).</string>
+
     <!-- Sparkle auto-update. The bridge polls the appcast feed, prompts the
          user when a new pkg is available, and hands the .pkg off to the
          macOS installer. Public EdDSA key is matched against per-release
