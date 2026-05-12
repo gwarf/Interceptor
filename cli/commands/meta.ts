@@ -111,7 +111,11 @@ export async function parseMetaCommand(filtered: string[], jsonMode = false): Pr
           try {
             const event = JSON.parse(line)
             if (since && new Date(event.timestamp).getTime() < since) continue
-            console.log(`${event.timestamp} ${event.event}${event.requestId ? ` [${event.requestId.slice(0, 8)}]` : ""}${event.action ? ` ${event.action}` : ""}${event.duration !== undefined ? ` ${event.duration}ms` : ""}${event.error ? ` error=${event.error}` : ""}`)
+            if (jsonMode) {
+              console.log(line)
+            } else {
+              console.log(`${event.timestamp} ${event.event}${event.requestId ? ` [${event.requestId.slice(0, 8)}]` : ""}${event.action ? ` ${event.action}` : ""}${event.duration !== undefined ? ` ${event.duration}ms` : ""}${event.error ? ` error=${event.error}` : ""}`)
+            }
           } catch {}
         }
       }
