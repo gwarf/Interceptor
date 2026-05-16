@@ -1018,6 +1018,10 @@ try {
 
         if (request.type === "extension") {
           const ctxId = request.contextId ?? "default"
+          const oldCtxId = (ws as any).__contextId
+          if (oldCtxId && oldCtxId !== ctxId) {
+            extensionWsMap.delete(oldCtxId)
+          }
           ;(ws as any).__contextId = ctxId
           extensionWsMap.set(ctxId, ws)
           lastRegisteredContextId = ctxId

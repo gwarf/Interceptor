@@ -275,6 +275,15 @@ export function registerSwKeepaliveListener(): void {
   })
 }
 
+export function registerStorageContextListener(): void {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes.contextId) return
+    const newId = changes.contextId.newValue
+    if (!newId || !wsChannel || wsChannel.readyState !== WebSocket.OPEN) return
+    wsChannel.send(JSON.stringify({ type: "extension", contextId: newId }))
+  })
+}
+
 export function registerAlarmListener(): void {
   chrome.alarms.create("keepalive", { periodInMinutes: 0.5 })
   chrome.alarms.onAlarm.addListener((alarm) => {
