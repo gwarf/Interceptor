@@ -35,6 +35,41 @@ function mimeTypeForFormat(format: string): string {
   return "image/jpeg"
 }
 
+// Background-first contract: chrome.tabs.captureVisibleTab captures the
+// **active** tab in a window, ignoring the tabId we pass — so when the target
+// tab was opened with `active: false` (the new default), the strip loop would
+// capture whichever foreground tab the user is actually looking at instead.
+// Mitigation: briefly activate our target around the capture window, then
+// restore whichever tab was active when we started. The visible flash is the
+// price; silently capturing the user's foreground tab is the bug we cannot
+// ship. Caller is expected to wrap the entire captureVisibleTab block —
+// including the rate-limit gap between strips — so the prior-active tab is
+// only restored once the full sequence is done.
+export async function withCaptureVisibleTabFocus<T>(
+  tabId: number,
+  windowId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  const [priorActive] = await chrome.tabs.query({ active: true, windowId })
+  const targetAlreadyActive = priorActive?.id === tabId
+  if (!targetAlreadyActive) {
+    try {
+      await chrome.tabs.update(tabId, { active: true })
+    } catch {
+      // If activation fails (tab vanished, window state changed), let the
+      // caller's captureVisibleTab call surface the underlying error so the
+      // existing diagnostics path stays authoritative.
+    }
+  }
+  try {
+    return await fn()
+  } finally {
+    if (!targetAlreadyActive && typeof priorActive?.id === "number" && priorActive.id !== tabId) {
+      await chrome.tabs.update(priorActive.id, { active: true }).catch(() => undefined)
+    }
+  }
+}
+
 async function stitchStripsInWorker(
   strips: Array<{ dataUrl: string; y: number }>,
   totalWidth: number,
@@ -296,34 +331,47 @@ async function handlePixelScreenshot(
       }
     }
 
-    for (let i = 0; i < stripCount; i++) {
-      const scrollTo = i * viewportHeight
-      await sendToContentScript(tabId, { type: "scroll_absolute", y: scrollTo })
-      await new Promise(r => setTimeout(r, 150))
-      let stripUrl: string
-      try {
-        stripUrl = await withCaptureTimeout(
-          `captureVisibleTab(strip ${i + 1}/${stripCount})`,
-          chrome.tabs.captureVisibleTab(fullTab.windowId, { format: captureFormat, quality })
-        )
-      } catch (err) {
-        await sendToContentScript(tabId, { type: "scroll_absolute", y: origScrollY }).catch(() => undefined)
-        if (err instanceof CaptureTimeoutError) {
+    // captureVisibleTab targets the active tab in the window. Wrap the entire
+    // strip sequence in one focus borrow so we only flash once for a full-page
+    // capture — not once per strip — and the user's prior-active tab is
+    // restored after the final strip lands.
+    const stripCaptureOutcome = await withCaptureVisibleTabFocus(tabId, fullTab.windowId, async () => {
+      for (let i = 0; i < stripCount; i++) {
+        const scrollTo = i * viewportHeight
+        await sendToContentScript(tabId, { type: "scroll_absolute", y: scrollTo })
+        await new Promise(r => setTimeout(r, 150))
+        let stripUrl: string
+        try {
+          stripUrl = await withCaptureTimeout(
+            `captureVisibleTab(strip ${i + 1}/${stripCount})`,
+            chrome.tabs.captureVisibleTab(fullTab.windowId, { format: captureFormat, quality })
+          )
+        } catch (err) {
+          await sendToContentScript(tabId, { type: "scroll_absolute", y: origScrollY }).catch(() => undefined)
+          if (err instanceof CaptureTimeoutError) {
+            return {
+              ok: false as const,
+              error: {
+                success: false,
+                error: `full-page screenshot failed: ${err.operation} timed out after ${err.timeoutMs}ms`,
+                data: { hint: VISIBILITY_HINT, layer: "captureVisibleTab", strip: i + 1, totalStrips: stripCount, timedOutAt: err.operation }
+              } as ActionResult
+            }
+          }
           return {
-            success: false,
-            error: `full-page screenshot failed: ${err.operation} timed out after ${err.timeoutMs}ms`,
-            data: { hint: VISIBILITY_HINT, layer: "captureVisibleTab", strip: i + 1, totalStrips: stripCount, timedOutAt: err.operation }
+            ok: false as const,
+            error: { success: false, error: `captureVisibleTab failed on strip ${i + 1}/${stripCount}: ${(err as Error).message}` } as ActionResult
           }
         }
-        return { success: false, error: `captureVisibleTab failed on strip ${i + 1}/${stripCount}: ${(err as Error).message}` }
+        strips.push({ dataUrl: stripUrl, y: Math.round(scrollTo * devicePixelRatio) })
+        // Chrome rate-limits captureVisibleTab to MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND
+        // (default: 2/sec). 1100ms between strips clears the quota with margin.
+        if (i < stripCount - 1) await new Promise(r => setTimeout(r, 1100))
       }
-      strips.push({ dataUrl: stripUrl, y: Math.round(scrollTo * devicePixelRatio) })
-      // Chrome rate-limits captureVisibleTab to MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND
-      // (default: 2/sec). 1100ms between strips clears the quota with margin.
-      if (i < stripCount - 1) await new Promise(r => setTimeout(r, 1100))
-    }
-
-    await sendToContentScript(tabId, { type: "scroll_absolute", y: origScrollY }).catch(() => undefined)
+      await sendToContentScript(tabId, { type: "scroll_absolute", y: origScrollY }).catch(() => undefined)
+      return { ok: true as const }
+    })
+    if (!stripCaptureOutcome.ok) return stripCaptureOutcome.error
 
     // Stitch inline in the SW using OffscreenCanvas — avoids the
     // SW ↔ offscreen-document IPC round-trip which silently drops
@@ -376,9 +424,13 @@ async function handlePixelScreenshot(
 
   let dataUrl: string
   try {
-    dataUrl = await withCaptureTimeout(
-      "captureVisibleTab",
-      chrome.tabs.captureVisibleTab(targetTab.windowId, { format: captureFormat, quality })
+    // Same borrow-and-restore as the strip path. One brief flash for a single
+    // capture is the cost of background-first defaults.
+    dataUrl = await withCaptureVisibleTabFocus(tabId, targetTab.windowId, () =>
+      withCaptureTimeout(
+        "captureVisibleTab",
+        chrome.tabs.captureVisibleTab(targetTab.windowId, { format: captureFormat, quality })
+      )
     )
   } catch (err) {
     if (err instanceof CaptureTimeoutError) {

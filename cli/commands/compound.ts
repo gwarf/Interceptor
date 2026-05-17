@@ -125,9 +125,14 @@ export function buildReadTreeAction(opts: {
 export function buildTabCreateAction(
   filtered: string[],
   url: string
-): { type: "tab_create"; url: string; reuse?: boolean } {
-  const action: { type: "tab_create"; url: string; reuse?: boolean } = { type: "tab_create", url }
+): { type: "tab_create"; url: string; reuse?: boolean; active?: boolean } {
+  const action: { type: "tab_create"; url: string; reuse?: boolean; active?: boolean } = { type: "tab_create", url }
   if (filtered.includes("--reuse")) action.reuse = true
+  // --activate is the explicit opt-in for foregrounding the new tab.
+  // Default is background-first; the extension's tab_create handler reads
+  // `action.active === true` and only then passes `active: true` to
+  // chrome.tabs.create.
+  if (filtered.includes("--activate")) action.active = true
   return action
 }
 

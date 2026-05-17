@@ -18,8 +18,12 @@ export async function parseTabsCommand(filtered: string[]): Promise<Action | nul
 
     case "tab":
       switch (filtered[1]) {
-        case "new":
-          return { type: "tab_create", url: filtered[2] }
+        case "new": {
+          // Background-first by default; --activate is the opt-in.
+          const action: Action = { type: "tab_create", url: filtered[2] }
+          if (filtered.includes("--activate")) action.active = true
+          return action
+        }
         case "close":
           return filtered[2]
             ? { type: "tab_close", tabId: parseInt(filtered[2]) }

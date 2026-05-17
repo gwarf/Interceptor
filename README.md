@@ -310,6 +310,8 @@ The legacy individual commands (`interceptor tab new`, `interceptor tree`, `inte
 
 **Interceptor Group** — Every `interceptor tab new` adds tabs to a cyan "interceptor" group. Commands only work on tabs in this group. Your personal tabs are never touched. Use `--any-tab` to override.
 
+**Focus Model (Background-First Contract)** — Interceptor never steals focus from the tab you're working in. `interceptor open <url>` and `interceptor tab new <url>` create their tabs in the **background** by default — the tab you had active stays active. Only four browser verbs intentionally move focus: `open --activate`, `tab new --activate`, `tab switch <id>`, and `window focus <id>`. The reuse path preserves the reused tab's existing focus state; add `--activate` to bring it forward. All other operations (`click`, `type`, `read`, `screenshot`, `net`, `scene`, `monitor`, etc.) work against the target tab without touching whichever tab you're looking at. This mirrors the macOS surface's same background-first contract — see `AGENTS.md` "Background First (Browser + macOS)" for the full inventory.
+
 **Passive Network** — All `fetch()` and `XMLHttpRequest` traffic on every page is captured automatically. No debugger, no infobanner. Query it with `interceptor net log`.
 
 **Scene Graph** — Profile-driven access to visual editors that don't render to the DOM normally: Canva, Google Docs, Google Slides. Enumerate objects by stable ID, click shapes, read full document text, navigate slide decks, render pages to PNG. `interceptor scene` — no CDP, no vision, no screenshots needed.
@@ -327,12 +329,14 @@ The legacy individual commands (`interceptor tab new`, `interceptor tree`, `inte
 These collapse multi-step patterns into single CLI invocations:
 
 ```bash
-interceptor open "https://example.com"        # Open URL, wait, return tree + text
+interceptor open "https://example.com"        # Open URL in a background tab (default), wait, return tree + text
+interceptor open "https://example.com" --activate     # Foreground the new tab (explicit opt-in)
 interceptor open "https://example.com" --tree-only   # Skip text
 interceptor open "https://example.com" --text-only   # Skip tree
 interceptor open "https://example.com" --full        # Full text (no 2000-char limit)
 interceptor open "https://example.com" --no-wait     # Don't wait for load
 interceptor open "https://example.com" --reuse        # Reuse the most recent Interceptor-group tab (long automation: avoids tab accumulation)
+interceptor open "https://example.com" --reuse --activate  # Reuse the tab and bring it to the foreground
 interceptor read                              # Tree + text for current page
 interceptor read e5                           # Tree + text for element subtree
 interceptor read --tree-only                  # Just tree

@@ -3,7 +3,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
-GlobalRegistrator.register()
+try { GlobalRegistrator.register() } catch { /* already registered by an earlier test file */ }
 
 beforeAll(() => {
   ;(globalThis as any).chrome = {

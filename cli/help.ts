@@ -27,13 +27,15 @@ Flags:
   --json                              Output as JSON
 
 Compound (agent-optimized):
-  interceptor open <url>                     Open URL, wait, return tree + text
+  interceptor open <url>                     Open URL in a background tab (default), wait, return tree + text
+  interceptor open <url> --activate          Foreground the new tab (explicit opt-in; background-first contract)
   interceptor open <url> --tree-only         Skip text, return only tree
   interceptor open <url> --text-only         Skip tree, return only text
   interceptor open <url> --full              Full text instead of 2000-char summary
   interceptor open <url> --timeout <ms>      Override wait-stable timeout (default 5000)
   interceptor open <url> --no-wait           Return immediately after tab creation
   interceptor open <url> --reuse             Navigate the most recent Interceptor-group tab instead of opening a new one (cleans up long automation runs)
+  interceptor open <url> --reuse --activate  Navigate the reused tab and bring it to the foreground
   interceptor read                           Tree + text for active tab
   interceptor read <ref>                     Tree + text for element subtree
   interceptor read --tree-only               Skip text
@@ -96,9 +98,10 @@ Navigation:
 
 Tabs:
   interceptor tabs                           List all tabs
-  interceptor tab new [url]                  Open new tab
+  interceptor tab new [url]                  Open new tab in background (default)
+  interceptor tab new [url] --activate       Open new tab and foreground it (explicit opt-in)
   interceptor tab close [id]                 Close tab
-  interceptor tab switch <id>                Switch to tab
+  interceptor tab switch <id>                Switch to tab (explicit focus move)
 
 Capture:
   interceptor screenshot                     Full-page DOM-render screenshot (default — works without focus)
@@ -228,8 +231,11 @@ Meta:
   interceptor help                           This help text
 
 Native (macOS Bridge — full install only):
-  Background-first by contract: only 'macos app activate' and 'macos open --activate'
-  move the user's frontmost window. Every other 'macos *' verb leaves focus alone.
+  Background-first by contract (mirrors the browser surface in 'Tabs' and 'open' above):
+  the only verbs that move the user's frontmost window or active tab are
+  'macos app activate', 'macos open --activate', 'open --activate',
+  'tab new --activate', 'tab switch <id>', and 'window focus <id>'.
+  Every other 'macos *' verb and every routine 'open'/'tab new' leaves focus alone.
 
   Compound (agent-optimized):
   interceptor macos open <app>               Tree + windows + app info (no foregrounding)

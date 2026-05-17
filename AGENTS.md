@@ -33,9 +33,13 @@ Operating rules:
 - Prefer passive observation before invasive instrumentation. For network work, start with `inspect` or `net`, not CDP debugger attach.
 - Do not use `--any-tab` unless the user explicitly authorizes operating outside Interceptor's tracked tab group.
 
-## Background First (macOS)
+## Background First (Browser + macOS)
 
-The macOS surface is **background-first by contract.** Only two commands move focus: `interceptor macos app activate <app>` and `interceptor macos open <app> --activate`. Everything else stays invisible — `open` (without `--activate`), all input verbs (`click`, `type`, `keys`, `drag`, `scroll`), all reads, capture, AX, menu, intent dispatch, vision, and overlays. If you call any other command and the user's frontmost app changes, that is a bug — file it.
+The whole product is **background-first by contract.** Both surfaces share the same rule: routine work never moves the user's focus; focus changes only happen on explicitly named opt-in verbs.
+
+**Browser surface:** `interceptor open <url>` and `interceptor tab new <url>` create tabs in the background by default. The user's currently-active tab stays active. The only verbs that move the active tab or focused window are: `open --activate`, `tab new --activate`, `tab switch <id>`, and `window focus <id>`. The reuse path (`open --reuse`) preserves the reused tab's current focus state — call `open --reuse --activate` to also foreground it. Every other browser verb (`click`, `type`, `read`, `tree`, `text`, `inspect`, `screenshot`, `net`, `cookies`, `scroll`, etc.) operates on the target tab without disturbing the user's active tab.
+
+**macOS surface:** Only two commands move focus: `interceptor macos app activate <app>` and `interceptor macos open <app> --activate`. Everything else stays invisible — `open` (without `--activate`), all input verbs (`click`, `type`, `keys`, `drag`, `scroll`), all reads, capture, AX, menu, intent dispatch, vision, and overlays. If you call any other command and the user's frontmost app changes, that is a bug — file it.
 
 When the user names a specific app ("screenshot of Brave", "scroll Signal", "open a tab in Brave"), do the work without bringing it forward unless the task strictly requires focus. Never reach for `app activate`, never insert `activate` into AppleScript blocks, never `--mode display`-screenshot a backgrounded app's window. The bridge's CGS capture / AX read / Apple Events / `postToPid` scroll paths all work without focus change.
 

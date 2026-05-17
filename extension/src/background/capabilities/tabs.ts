@@ -26,7 +26,18 @@ export async function handleTabActions(
             const candidate = sorted[0]
             if (candidate?.id !== undefined) {
               try {
-                const updated = await chrome.tabs.update(candidate.id, { url: targetUrl })
+                // Reuse path: preserve the candidate tab's current
+                // active/inactive state by default — navigating a background
+                // tab keeps it in the background, a foreground tab stays
+                // foreground. Only pass `active: true` when the caller
+                // explicitly asked for activation via `action.active`, so
+                // `interceptor open <url> --reuse --activate` foregrounds
+                // the reused tab on demand without disturbing the user's
+                // focus on every routine reuse call.
+                const reuseActivate = (action.active as boolean | undefined) === true
+                const updateProps: chrome.tabs.UpdateProperties = { url: targetUrl }
+                if (reuseActivate) updateProps.active = true
+                const updated = await chrome.tabs.update(candidate.id, updateProps)
                 await waitForTabLoad(candidate.id)
                 // Pin the reused tab as the auto-target for subsequent commands.
                 // Mirrors the new-tab path below: every successful tab_create
@@ -45,7 +56,13 @@ export async function handleTabActions(
           }
         }
       }
-      const newTab = await chrome.tabs.create({ url: targetUrl })
+      // Background-by-default: chrome.tabs.create defaults `active` to true,
+      // which steals focus from the user's current tab. Interceptor's surface
+      // contract is background-first (mirrors the macOS surface: `open
+      // --activate` is the explicit opt-in). Callers pass `action.active:
+      // true` only when the new tab is genuinely meant to be foregrounded.
+      const shouldActivate = (action.active as boolean | undefined) === true
+      const newTab = await chrome.tabs.create({ url: targetUrl, active: shouldActivate })
       if (newTab.id) {
         const groupId = await addTabToInterceptorGroup(newTab.id)
         // Pin the newly-created tab as the auto-target for subsequent commands
