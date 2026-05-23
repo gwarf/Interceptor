@@ -191,13 +191,49 @@ fi
 # For each pkg: copy, sign_update, mutate appcast.xml. Uses inline Python to
 # rewrite appcast.xml so the operation is idempotent — re-publishing the same
 # (version, title) replaces the prior <item> instead of duplicating it.
+resolve_min_sys_ver() {
+  local mode="$1" signed_pkg="$2"
+  case "$mode" in
+    browser-only)
+      echo "11.0"
+      ;;
+    full)
+      local tmpdir expand_dir plist min_ver
+      tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/interceptor-sparkle-pkg.XXXXXX")"
+      expand_dir="$tmpdir/pkg"
+      if ! pkgutil --expand-full "$signed_pkg" "$expand_dir" >/dev/null; then
+        rm -rf "$tmpdir"
+        return 1
+      fi
+      plist="$expand_dir/Interceptor-Bridge.pkg/Payload/Applications/interceptor-bridge.app/Contents/Info.plist"
+      if [[ ! -f "$plist" ]]; then
+        echo "ERROR: Full pkg is missing bridge Info.plist at $plist" >&2
+        rm -rf "$tmpdir"
+        return 1
+      fi
+      min_ver="$(plutil -extract LSMinimumSystemVersion raw -o - "$plist" 2>/dev/null || true)"
+      rm -rf "$tmpdir"
+      if [[ -z "$min_ver" ]]; then
+        echo "ERROR: Full pkg bridge Info.plist is missing LSMinimumSystemVersion" >&2
+        return 1
+      fi
+      echo "$min_ver"
+      ;;
+    *)
+      echo "ERROR: unknown mode '$mode'" >&2
+      return 1
+      ;;
+  esac
+}
+
 publish_to_sparkle() {
   local mode="$1" signed_pkg="$2" pkg_basename min_sys_ver title sig_line
   pkg_basename="$(basename "$signed_pkg")"
   case "$mode" in
-    browser-only) min_sys_ver="11.0";  title="Interceptor (Browser-Only) ${VERSION}" ;;
-    full)         min_sys_ver="14.0";  title="Interceptor (Full) ${VERSION}" ;;
+    browser-only) title="Interceptor (Browser-Only) ${VERSION}" ;;
+    full)         title="Interceptor (Full) ${VERSION}" ;;
   esac
+  min_sys_ver="$(resolve_min_sys_ver "$mode" "$signed_pkg")"
 
   if (( DRY_RUN )); then
     echo "    DRY: cp $signed_pkg → $HOST_PUBLIC/$pkg_basename"

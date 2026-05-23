@@ -16,12 +16,13 @@
         hostArchitectures="arm64,x86_64"/>
 
     <!--
-        Minimum macOS 14 (Sonoma) — the Swift bridge is built against
-        the macOS 14 SDK (interceptor-bridge/Package.swift platforms[.macOS(.v14)]).
+        Minimum macOS 15 (Sequoia) — the Swift bridge links Apple's
+        Containerization package for VM lifecycle support, and
+        interceptor-bridge/Package.swift declares platforms[.macOS(.v15)].
     -->
     <volume-check>
         <allowed-os-versions>
-            <os-version min="14.0"/>
+            <os-version min="15.0"/>
         </allowed-os-versions>
     </volume-check>
 

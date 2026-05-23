@@ -590,7 +590,7 @@ if false; then
       pkg_basename="$(basename "$signed_pkg")"
       case "$mode" in
         browser-only) min_sys_ver="11.0";  title="Interceptor (Browser-Only) ${VERSION}" ;;
-        full)         min_sys_ver="14.0";  title="Interceptor (Full) ${VERSION}" ;;
+        full)         min_sys_ver="15.0";  title="Interceptor (Full) ${VERSION}" ;;
       esac
       echo "    Copying $signed_pkg → $HOST_PUBLIC/$pkg_basename"
       cp "$signed_pkg" "$HOST_PUBLIC/$pkg_basename"

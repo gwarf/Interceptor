@@ -204,7 +204,7 @@ The recommended install path for end users is the signed `.pkg` documented in [I
 | Mode | What it installs | macOS TCC prompts | When to pick it |
 |---|---|---|---|
 | **`--browser-only`** | CLI + daemon + extension | None | You only want browser control. Smallest footprint, no Screen Recording / Accessibility / Apple Events prompts. Works on macOS and Windows. |
-| **`--full`** | Everything in browser-only **plus** the Swift bridge `.app`, the LaunchAgent, and the macOS subcommands | Screen Recording, Accessibility, Apple Events (per-target-app on first dispatch) | You need `interceptor macos *` (native AX tree, OS-level input, ScreenCaptureKit, Vision/Speech/NLP). macOS only. |
+| **`--full`** | Everything in browser-only **plus** the Swift bridge `.app`, the LaunchAgent, and the macOS subcommands | Screen Recording, Accessibility, Apple Events (per-target-app on first dispatch) | You need `interceptor macos *` (native AX tree, OS-level input, ScreenCaptureKit, Vision/Speech/NLP). macOS 15+. |
 
 If you don't pass either flag, the script prompts. The default in the prompt is `--full` on macOS, `--browser-only` everywhere else.
 
