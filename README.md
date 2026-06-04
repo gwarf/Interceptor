@@ -495,20 +495,27 @@ A session follows your focus across the interceptor tab group. Switch to another
 ```bash
 interceptor monitor start                              # Begin recording on the active interceptor tab
 interceptor monitor start --instruction "..."          # Annotate with task intent
+interceptor monitor start --task "Teach 9 AM batch" --mode human-teach
 interceptor monitor stop                               # End recording, print summary
+interceptor monitor stop --task <taskId>               # Stop the task envelope only
 interceptor monitor status                             # Show active session(s)
+interceptor monitor status --task <taskId>             # Show task envelope status
 interceptor monitor pause                              # Stop emitting events without ending
 interceptor monitor resume                             # Resume a paused session
+interceptor monitor task attach <taskId> <sessionId>   # Attach an existing source session
 interceptor monitor list                               # All sessions in the event log
 interceptor monitor tail                               # Live tail current session (pretty)
 interceptor monitor tail --raw                         # Live tail (raw JSONL)
 interceptor monitor export <sessionId>                 # Aligned text rendering
+interceptor monitor export --task <taskId> --format transcript
 interceptor monitor export <sessionId> --json          # Raw JSONL for that session
 interceptor monitor export <sessionId> --plan          # Emit interceptor ... replay script
 interceptor monitor export <sessionId> --with-bodies   # Include persisted net-body context when available
 ```
 
 Each event line is sparse JSON (short keys: `t`, `s`, `k`, `sid`, `ref`, `r`, `n`, `cause`) so an agent can read a 30-minute session in a few KB. User actions get a session-monotonic `seq`; mutations and network calls fired within 500ms of an action carry `cause: <action_seq>`. Real user events have `tr: true`; interceptor's own synthetic clicks have `tr: false`. The replay-plan generator automatically includes synthetic clicks when no real user events exist in the session (common when an agent drove the browser). Use `--include-synthetic` to force inclusion regardless.
+
+Tasks are task-scoped; monitor sessions are source-scoped. `--task` creates or attaches a durable task envelope under `${INTERCEPTOR_TASKS_DIR:-<platform app support>}/<taskId>/` while preserving the existing browser/macOS source artifacts. `interceptor monitor export <sessionId>` remains a source-session export. `interceptor monitor export --task <taskId> --format timeline|transcript|json` builds a task-level view by deterministically merging attached source logs, then validating semantic transcript entries against source references.
 
 The rolling live event stream lives in `/tmp/interceptor-events.jsonl`. Export prefers per-session artifacts under `/tmp/interceptor-monitor-sessions/<sessionId>/` (one directory per session containing `events.jsonl`, `session.json`, and `net.jsonl`) and falls back to the rolling event log for legacy sessions. `--with-bodies` uses persisted correlated net-body artifacts when present (body previews are capped at 64 KiB, redact `Authorization` / `Cookie` / token-shaped strings, and only persist JSON / text content types) and otherwise leaves `interceptor net log` hints in the replay output.
 
@@ -904,6 +911,7 @@ Same pattern as the browser monitor. Record what the user does across native app
 # Phase 1 — core monitor (Accessibility TCC required)
 interceptor macos monitor start                  # frontmost-app default scope
 interceptor macos monitor start --instruction "Show me how you file expenses"
+interceptor macos monitor start --task "Teach Slack triage" --mode human-teach --app Slack
 interceptor macos monitor start --app Slack      # scope to a single app
 interceptor macos monitor start --apps Slack,Mail
 interceptor macos monitor start --all-apps       # every running PID + new launches
