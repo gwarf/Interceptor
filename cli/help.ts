@@ -254,7 +254,8 @@ Meta:
   interceptor status                         Check daemon status (local — no connection needed)
   interceptor status --verbose               Daemon + bridge + extension probe with per-component diagnostics
   interceptor status --explain               Alias for --verbose with extra rationale per component
-  interceptor diagnose                       Agent debugging snapshot: daemon, extension, active tab, elements, monitor
+  interceptor diagnose                       Agent debugging snapshot: daemon, all contexts, active tabs, elements, monitor
+  interceptor diagnose --context <id>        Probe a specific browser context only
   interceptor diagnose --json                Same snapshot as JSON
   interceptor help                           This help text
 
