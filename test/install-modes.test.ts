@@ -202,11 +202,15 @@ describe("install browser selection — dry-run", () => {
       expect(stdout).toContain(CHROME_NM_SUBSTR)
       expect(stdout).not.toContain(BRAVE_NM_SUBSTR)
     } else if (browserInstalled("chrome")) {
-      expect(stdout).toContain("only supported browser found")
+      // Either "only supported browser found" or the non-interactive default —
+      // both are valid auto-selections of the single installed browser. (The
+      // install script's detection can differ from browserInstalled() on CI
+      // runners, so assert the outcome, not the exact phrasing.)
+      expect(stdout).toMatch(/only supported browser found|defaulting to 'chrome' \(non-interactive\)/)
       expect(stdout).toContain("Browser: chrome")
       expect(stdout).toContain(CHROME_NM_SUBSTR)
     } else if (browserInstalled("brave")) {
-      expect(stdout).toContain("only supported browser found")
+      expect(stdout).toMatch(/only supported browser found|defaulting to 'brave' \(non-interactive\)/)
       expect(stdout).toContain("Browser: brave")
       expect(stdout).toContain(BRAVE_NM_SUBSTR)
     } else {
