@@ -71,7 +71,7 @@ const ALL_KNOWN_CMDS = new Set<string>([
 ])
 
 // Monitor subcommands that are handled locally (no daemon needed)
-const MONITOR_LOCAL_SUBCOMMANDS = new Set(["tail", "list", "export", "task"])
+const MONITOR_LOCAL_SUBCOMMANDS = new Set(["tail", "list", "export", "task", "repair"])
 
 function unwrapResult(response: DaemonResponse): DaemonResult {
   return response.result

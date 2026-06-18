@@ -162,6 +162,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>interceptor-bridge captures screen frames when you ask Interceptor to take screenshots or run screen capture / stream commands.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>interceptor-bridge captures microphone input when you ask Interceptor to use listen / audio commands.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>interceptor-bridge transcribes speech during workflow capture so Interceptor can build a semantic transcript of what you demonstrate (mac_monitor --include speech, mac_listen).</string>
 
     <!-- personal data and distribution surfaces.
          Each TCC-gated framework gets a usage description string that surfaces

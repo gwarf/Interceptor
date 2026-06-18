@@ -168,6 +168,9 @@ GlobalOverlayDomainRef.shared = overlayDomain
 signal(SIGINT) { _ in
     Platform.log("SIGINT received — shutting down")
     GlobalOverlayDomainRef.shared?.handle("stop", action: ["sub": "stop"]) { _ in }
+    // durably persist any buffered monitor events before exit.
+    MonitorEventWriter.shared.flush()
+    MonitorEventWriter.shared.closeAll()
     Thread.sleep(forTimeInterval: 0.1)
     Platform.cleanup()
     exit(0)
@@ -176,6 +179,9 @@ signal(SIGINT) { _ in
 signal(SIGTERM) { _ in
     Platform.log("SIGTERM received — shutting down")
     GlobalOverlayDomainRef.shared?.handle("stop", action: ["sub": "stop"]) { _ in }
+    // durably persist any buffered monitor events before exit.
+    MonitorEventWriter.shared.flush()
+    MonitorEventWriter.shared.closeAll()
     Thread.sleep(forTimeInterval: 0.1)
     Platform.cleanup()
     exit(0)
