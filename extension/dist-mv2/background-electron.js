@@ -446,6 +446,7 @@ async function uninstallScreenshotCorsRule(tabId) {
 
 // extension/src/background/capabilities/screenshot.ts
 var CAPTURE_TIMEOUT_MS = 5000;
+var DOM_RENDER_TIMEOUT_MS = 30000;
 var VISIBILITY_HINT = "Chrome/Brave window may not be visible — bring it to the front and retry, or pass --tab <id> of a tab in a visible window.";
 
 class CaptureTimeoutError extends Error {
@@ -539,18 +540,6 @@ function resolveDomMode(action) {
     return "region";
   return "full";
 }
-async function injectScreenshotRunner(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "ISOLATED",
-      files: ["screenshot-runner.js"]
-    });
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: `failed to inject screenshot-runner.js: ${err.message}` };
-  }
-}
 async function reencodeAsWebP(dataUrl, qualityPct) {
   const res = await fetch(dataUrl);
   const blob = await res.blob();
@@ -596,9 +585,6 @@ async function handleDomRenderScreenshot(action, tabId) {
   }
   await installScreenshotCorsRule(tabId);
   try {
-    const inject = await injectScreenshotRunner(tabId);
-    if (!inject.success)
-      return { success: false, error: inject.error || "runner injection failed" };
     const dsAction = { type: "dom_screenshot", mode, format: renderFormat, quality };
     if (action.ref !== undefined)
       dsAction.ref = action.ref;
@@ -612,7 +598,19 @@ async function handleDomRenderScreenshot(action, tabId) {
       dsAction.scale = scale;
     if (targetMaxLongEdge !== undefined)
       dsAction.target_max_long_edge = targetMaxLongEdge;
-    const renderResult = await sendToContentScript(tabId, dsAction);
+    let renderResult;
+    try {
+      renderResult = await withCaptureTimeout("dom-render", sendToContentScript(tabId, dsAction), DOM_RENDER_TIMEOUT_MS);
+    } catch (err) {
+      if (err instanceof CaptureTimeoutError) {
+        return {
+          success: false,
+          error: `DOM-render timed out after ${DOM_RENDER_TIMEOUT_MS}ms — the content script did not return image data. The render stalled (e.g. a resource never settled); retry, or use --pixel for a compositor capture.`,
+          data: { layer: "dom-render-timeout" }
+        };
+      }
+      throw err;
+    }
     if (!renderResult || !renderResult.success || !renderResult.data) {
       return { success: false, error: renderResult?.error || "dom render returned no data" };
     }
@@ -860,10 +858,38 @@ async function transformPixelDataUrl(dataUrl, requestedFormat, quality, targetMa
     return { success: false, error: `transform failed: ${err.message}` };
   }
 }
+async function handleOcr(action, tabId) {
+  const shot = { type: "screenshot", format: "png", save: false };
+  for (const k of ["selector", "element", "ref", "region", "clip", "scale", "target_max_long_edge"]) {
+    if (action[k] !== undefined)
+      shot[k] = action[k];
+  }
+  const rendered = await handleDomRenderScreenshot(shot, tabId);
+  if (!rendered.success)
+    return rendered;
+  const dataUrl = rendered.data?.dataUrl;
+  if (!dataUrl)
+    return { success: false, error: "capture for OCR produced no image" };
+  const ocr = await sendToOffscreen({ type: "ocr", dataUrl });
+  if (!ocr.success)
+    return { success: false, error: ocr.error || "OCR failed" };
+  return {
+    success: true,
+    data: {
+      text: (ocr.data?.text || "").trim(),
+      source: ocr.data?.source || "tesseract",
+      confidence: ocr.data?.confidence ?? null,
+      width: rendered.data?.width,
+      height: rendered.data?.height
+    }
+  };
+}
 async function handleScreenshotActions(action, tabId) {
   switch (action.type) {
     case "screenshot_background":
       return handleScreenshotBackground(action, tabId);
+    case "ocr":
+      return handleOcr(action, tabId);
     case "page_capture": {
       const mhtml = await chrome.pageCapture.saveAsMHTML({ tabId });
       const text = await mhtml.text();
@@ -1048,6 +1074,50 @@ function hostCanvasSignals(limit = 20) {
       }
     },
     globals: candidateGlobalDetails
+  };
+}
+function canvasAccessibleText(canvasIndex) {
+  const canvases = Array.from(document.querySelectorAll("canvas"));
+  const c = canvases[canvasIndex];
+  if (!c)
+    return { found: false, error: "canvas index out of range", canvasCount: canvases.length };
+  const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const byIds = (ids) => !ids ? "" : ids.split(/\s+/).map((id) => norm(document.getElementById(id)?.textContent)).filter(Boolean).join(" ");
+  const sources = {};
+  const ariaLabel = norm(c.getAttribute("aria-label"));
+  if (ariaLabel)
+    sources.ariaLabel = ariaLabel;
+  const ariaLabelledby = byIds(c.getAttribute("aria-labelledby"));
+  if (ariaLabelledby)
+    sources.ariaLabelledby = ariaLabelledby;
+  const fallback = norm(c.textContent);
+  if (fallback)
+    sources.fallback = fallback;
+  const fig = c.closest("figure");
+  const figcaption = fig ? norm(fig.querySelector("figcaption")?.textContent) : "";
+  if (figcaption)
+    sources.figcaption = figcaption;
+  const ariaDescribedby = byIds(c.getAttribute("aria-describedby"));
+  if (ariaDescribedby)
+    sources.ariaDescribedby = ariaDescribedby;
+  const title = norm(c.getAttribute("title"));
+  if (title)
+    sources.title = title;
+  const text = [
+    sources.ariaLabel,
+    sources.ariaLabelledby,
+    sources.fallback,
+    sources.figcaption,
+    sources.ariaDescribedby,
+    sources.title
+  ].filter(Boolean).join(`
+`);
+  return {
+    found: !!text,
+    text,
+    role: c.getAttribute("role") || "",
+    sources,
+    canvasCount: canvases.length
   };
 }
 function canvasObserverSummary(limit = 100, kinds, canvasIndex) {
@@ -1303,39 +1373,47 @@ async function handleCanvasActions(action, tabId) {
       };
     }
     case "canvas_ocr": {
-      const readResult = await handleCanvasActions({
-        type: "canvas_read",
-        canvasIndex: action.canvasIndex,
-        region: action.region,
-        format: "png"
-      }, tabId);
-      if (!readResult.success)
-        return readResult;
-      const dataUrl = readResult.data.dataUrl;
-      if (!dataUrl)
-        return { success: false, error: "canvas OCR requires a readable canvas image" };
-      const ocrResult = await sendToOffscreen({
-        type: "ocr",
-        dataUrl
-      });
-      if (!ocrResult.success)
-        return { success: false, error: ocrResult.error || "canvas OCR failed" };
+      const a11y = await executeInMainWorld(tabId, canvasAccessibleText, [action.canvasIndex]);
+      if (a11y && a11y.error) {
+        return { success: false, error: a11y.error };
+      }
       const hostSignals = await executeInMainWorld(tabId, hostCanvasSignals, [10]);
       const semanticText = hostSignals?.docs?.textbox?.exists ? hostSignals.docs.textbox.textSample || "" : "";
-      const ocrText = ocrResult.data?.text || "";
-      const normalizedOcr = ocrText.replace(/\s+/g, " ").trim();
-      const normalizedSemantic = semanticText.replace(/\s+/g, " ").trim();
-      const matchedSemantic = normalizedOcr && normalizedSemantic ? normalizedSemantic.includes(normalizedOcr) || normalizedOcr.includes(normalizedSemantic) : false;
+      const a11yText = a11y && a11y.found ? a11y.text || "" : "";
+      let text = a11yText || semanticText;
+      let source = a11yText ? "accessibility" : semanticText ? "semantic-textbox" : "none";
+      let confidence = null;
+      let ocrFallbackUsed = false;
+      if (!text) {
+        const readResult = await handleCanvasActions({
+          type: "canvas_read",
+          canvasIndex: action.canvasIndex,
+          region: action.region,
+          format: "png"
+        }, tabId);
+        const dataUrl = readResult.success ? readResult.data.dataUrl : undefined;
+        if (dataUrl) {
+          const ocr = await sendToOffscreen({ type: "ocr", dataUrl });
+          if (ocr.success && (ocr.data?.text || "").trim()) {
+            text = ocr.data.text.trim();
+            source = "tesseract";
+            confidence = ocr.data?.confidence ?? null;
+            ocrFallbackUsed = true;
+          }
+        }
+      }
       return {
         success: true,
         data: {
-          text: ocrText,
-          source: ocrResult.data?.source || "ocr",
-          confidence: ocrResult.data?.confidence ?? null,
+          text,
+          source,
+          confidence,
           diagnostics: {
-            pixelSource: "canvas_read",
-            strongerSourceAvailable: !!semanticText,
-            strongerSourceMatched: matchedSemantic
+            accessibilityText: !!a11yText,
+            accessibilitySources: a11y?.sources || null,
+            semanticTextboxAvailable: !!semanticText,
+            ocrFallbackUsed,
+            hint: text ? undefined : "No accessible/semantic text and pixel OCR found nothing. For a canvas-rendered editor use `interceptor scene text`."
           }
         }
       };
@@ -3304,7 +3382,7 @@ async function handleMonitorActions(action, tabId) {
 registerMonitorListeners();
 restorePageCommCaptureConfig();
 var OS_INPUT_ACTIONS = new Set(["os_click", "os_key", "os_type", "os_move"]);
-var SCREENSHOT_ACTIONS = new Set(["screenshot", "screenshot_background", "page_capture"]);
+var SCREENSHOT_ACTIONS = new Set(["screenshot", "screenshot_background", "page_capture", "ocr"]);
 var CAPTURE_STREAM_ACTIONS = new Set(["capture_start", "capture_frame", "capture_stop", "canvas_diff"]);
 var CANVAS_ACTIONS = new Set([
   "canvas_list",

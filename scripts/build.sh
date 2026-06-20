@@ -99,7 +99,6 @@ build_extension() {
   bun build extension/src/content.ts --outdir=extension/dist --target=browser
   bun build extension/src/inject-net.ts --outdir=extension/dist --target=browser
   bun build extension/src/inject-canvas.ts --outdir=extension/dist --target=browser
-  bun build extension/src/screenshot-runner.ts --outdir=extension/dist --target=browser
   bun build extension/src/offscreen.ts --outfile=extension/dist/offscreen.js --target=browser
   bun build extension/src/popup.ts --outfile=extension/dist/popup.js --target=browser
   cp extension/manifest.json extension/dist/
@@ -107,8 +106,20 @@ build_extension() {
   cp extension/popup.html extension/dist/
   rm -rf extension/dist/icons
   cp -R extension/icons extension/dist/icons
+  # Tesseract.js OCR assets — bundled for offline, cross-platform pixel OCR
+  # (browser-only / non-macOS). Loaded from extension-local URLs by the
+  # offscreen document; lazy-initialized on first `ocr` request.
+  mkdir -p extension/dist/tesseract
+  cp node_modules/tesseract.js/dist/worker.min.js extension/dist/tesseract/
+  # OEM 1 (LSTM) cores: Tesseract.js picks relaxed-SIMD on Chrome/Brave 116+
+  # (the manifest min), with plain SIMD-LSTM as the one-tier fallback.
+  cp node_modules/tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm.js extension/dist/tesseract/
+  cp node_modules/tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm extension/dist/tesseract/
+  cp node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js extension/dist/tesseract/
+  cp node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm extension/dist/tesseract/
+  cp extension/tesseract-assets/eng.traineddata.gz extension/dist/tesseract/
   chmod 644 extension/dist/* 2>/dev/null || true
-  chmod -R u+rwX,go+rX extension/dist/icons 2>/dev/null || true
+  chmod -R u+rwX,go+rX extension/dist/icons extension/dist/tesseract 2>/dev/null || true
 }
 
 build_extension_mv2() {
@@ -119,7 +130,6 @@ build_extension_mv2() {
   cp extension/dist/content.js extension/dist-mv2/content.js
   cp extension/dist/net-buffer-content.js extension/dist-mv2/net-buffer-content.js
   cp extension/dist/inject-canvas.js extension/dist-mv2/inject-canvas.js
-  cp extension/dist/screenshot-runner.js extension/dist-mv2/screenshot-runner.js
   cp extension/dist/offscreen.html extension/dist-mv2/offscreen.html
   cp extension/dist/popup.html extension/dist-mv2/popup.html
   printf '%s\n' 'globalThis.INTERCEPTOR_APP_CONTEXT_ID = "app:electron";' > extension/dist-mv2/electron-config.js

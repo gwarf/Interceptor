@@ -125,6 +125,9 @@ Capture:
   interceptor screenshot --quality 80        Encode quality 0-100 (defaults: png 92, jpeg 92, webp 85)
   interceptor screenshot --target-max-long-edge 1568   Clamp output long edge in pixels (auto-resize at capture)
   interceptor screenshot --clip X,Y,W,H     [deprecated alias for --region]
+  interceptor ocr "<css>"                    OCR text from an element (bundled Tesseract — offline, cross-platform, no Mac)
+  interceptor ocr --region X,Y,W,H           OCR a page region
+  interceptor ocr --element N                OCR an element by ref
   interceptor eval <code>                    Run JS in isolated world
   interceptor eval <code> --main             Run JS in page context
 
@@ -179,8 +182,7 @@ Canvas:
   interceptor canvas objects --kind text     Filter derived objects by kind
   interceptor canvas model                   Inspect host-state and app-model signals
   interceptor canvas routes                  Inspect candidate first-party canvas-related routes
-  interceptor canvas ocr N                   OCR text from canvas N
-  interceptor canvas ocr N --region X,Y,W,H  OCR a canvas crop
+  interceptor canvas ocr N                   Native canvas text (aria/fallback + semantic model; no pixel OCR)
   interceptor canvas read N                  Read canvas as data URL
   interceptor canvas read N --format png     PNG format
   interceptor canvas read N --region X,Y,W,H  Read pixel region

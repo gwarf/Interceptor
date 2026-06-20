@@ -30,7 +30,7 @@ restorePageCommCaptureConfig()
 type ActionResult = { success: boolean; error?: string; data?: unknown; tabId?: number }
 
 const OS_INPUT_ACTIONS = new Set(["os_click", "os_key", "os_type", "os_move"])
-const SCREENSHOT_ACTIONS = new Set(["screenshot", "screenshot_background", "page_capture"])
+const SCREENSHOT_ACTIONS = new Set(["screenshot", "screenshot_background", "page_capture", "ocr"])
 const CAPTURE_STREAM_ACTIONS = new Set(["capture_start", "capture_frame", "capture_stop", "canvas_diff"])
 const CANVAS_ACTIONS = new Set([
   "canvas_list",

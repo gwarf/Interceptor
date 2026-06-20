@@ -27,9 +27,12 @@ const ACTION_TIMEOUT_OVERRIDES_MS: Record<string, number> = {
   screenshot: 45_000,
   screenshot_background: 45_000,
   canvas_read: 45_000,
-  canvas_ocr: 45_000,
+  canvas_ocr: 60_000,
   canvas_diff: 45_000,
   capture_frame: 45_000,
+  // OCR: native capture + Tesseract. First call also lazy-loads the WASM core +
+  // language data, so allow generous headroom.
+  ocr: 60_000,
 }
 
 function pickTimeoutForAction(actionType: string): number {

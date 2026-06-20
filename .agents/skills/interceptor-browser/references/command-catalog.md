@@ -114,8 +114,10 @@ Pixels only when observer data is insufficient:
 ```bash
 interceptor canvas read 1 [--format png] [--region 10,20,300,120] [--webgl]
 interceptor canvas diff 1
-interceptor canvas ocr 1                           # Experimental — fallback only
+interceptor canvas ocr 1                           # Native canvas text: aria/fallback + semantic model (no pixel OCR)
 ```
+
+`canvas ocr` returns the canvas's *native* accessible text (aria-label / aria-labelledby / fallback subtree / figcaption) plus the page's semantic textbox model — no pixel OCR. For a canvas-rendered editor prefer `scene text`; for genuine pixel-only text use `interceptor macos vision text` (native macOS Vision OCR).
 
 Canvas indexes are DOM canvas indexes.
 
