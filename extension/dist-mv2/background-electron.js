@@ -4253,6 +4253,43 @@ function nextReconnectDelay(delayMs, maxMs = MAX_RECONNECT_DELAY_MS) {
   return Math.min(delayMs * 2, maxMs);
 }
 
+// extension/src/background/context-registration.ts
+function registrationControlType(msg) {
+  const candidate = msg;
+  if (!candidate || typeof candidate.type !== "string")
+    return null;
+  if (candidate.type === "context_registered" || candidate.type === "context_conflict")
+    return candidate.type;
+  return null;
+}
+function getBadgeApi(chromeApi) {
+  const api = chromeApi.action ?? chromeApi.browserAction;
+  if (!api || typeof api.setBadgeText !== "function")
+    return null;
+  return api;
+}
+function ignoreAsyncResult(result) {
+  if (result && typeof result.catch === "function") {
+    result.catch((err) => console.error("action badge update failed:", err));
+  }
+}
+function updateContextBadge(chromeApi, details) {
+  const api = getBadgeApi(chromeApi);
+  if (!api)
+    return false;
+  ignoreAsyncResult(api.setBadgeText({ text: details.text ?? "" }));
+  if (details.color && api.setBadgeBackgroundColor) {
+    ignoreAsyncResult(api.setBadgeBackgroundColor({ color: details.color }));
+  }
+  return true;
+}
+function setContextConflictBadge(chromeApi) {
+  return updateContextBadge(chromeApi, { text: "!", color: "#e53e3e" });
+}
+function clearContextConflictBadge(chromeApi) {
+  return updateContextBadge(chromeApi, { text: "" });
+}
+
 // extension/src/background/transport.ts
 var nativePort = null;
 var activeTransport = "none";
@@ -4318,6 +4355,23 @@ function isWsOpen() {
     return false;
   return true;
 }
+function markWsUnregistered() {
+  wsReady = false;
+  if (activeTransport === "websocket")
+    activeTransport = "none";
+}
+function markWsRegistered() {
+  wsReady = true;
+  clearContextConflictBadge(chrome);
+  if (activeTransport !== "native") {
+    activeTransport = "websocket";
+    wsReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+    isConnecting = false;
+    console.log("connection ready via ws channel");
+    drainMessageQueue();
+  }
+  drainOutboundRecoveryQueue();
+}
 function sendWs(msg) {
   const channel = wsChannel;
   if (!wsReady || !channel || channel.readyState !== WebSocket.OPEN)
@@ -4328,6 +4382,27 @@ function sendWs(msg) {
   } catch {
     return false;
   }
+}
+function sendWsRegistration(ws, contextId) {
+  markWsUnregistered();
+  try {
+    ws.send(JSON.stringify({ type: "extension", contextId }));
+    return true;
+  } catch (err) {
+    console.error("ws context registration send error:", err);
+    return false;
+  }
+}
+function closeWsForReconnect(ws) {
+  try {
+    ws.close();
+  } catch {}
+  if (wsChannel !== ws)
+    return;
+  stopWsKeepAlive();
+  markWsUnregistered();
+  wsChannel = null;
+  scheduleWsReconnect();
 }
 function enqueueOutboundRecovery(msg) {
   if (outboundRecoveryQueue.length >= OUTBOUND_RECOVERY_QUEUE_CAP) {
@@ -4505,38 +4580,52 @@ function connectWsChannel() {
     return;
   try {
     const ws = new WebSocket(WS_URL);
+    wsChannel = ws;
     ws.onopen = async () => {
-      wsChannel = ws;
-      wsReady = true;
+      if (wsChannel !== ws) {
+        try {
+          ws.close();
+        } catch {}
+        return;
+      }
+      markWsUnregistered();
       if (wsReconnectTimer) {
         clearTimeout(wsReconnectTimer);
         wsReconnectTimer = null;
       }
       startWsKeepAlive();
       const contextId = await getOrCreateContextId();
+      if (wsChannel !== ws) {
+        try {
+          ws.close();
+        } catch {}
+        return;
+      }
       if (ws.readyState !== WebSocket.OPEN)
         return;
-      try {
-        ws.send(JSON.stringify({ type: "extension", contextId }));
-      } catch (err) {
-        console.error("ws handshake send error:", err);
-        ws.close();
+      if (!sendWsRegistration(ws, contextId)) {
+        closeWsForReconnect(ws);
         return;
       }
-      console.log("ws channel connected");
-      if (activeTransport !== "native") {
-        activeTransport = "websocket";
-        wsReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
-        isConnecting = false;
-        console.log("connection ready via ws channel");
-        drainMessageQueue();
-      }
-      drainOutboundRecoveryQueue();
+      console.log("ws channel connected; context registration requested");
     };
     ws.onmessage = (event) => {
+      if (wsChannel !== ws)
+        return;
       try {
         const msg = JSON.parse(typeof event.data === "string" ? event.data : "");
         console.log("ws onmessage:", JSON.stringify(msg).slice(0, 200));
+        const controlType = registrationControlType(msg);
+        if (controlType === "context_conflict") {
+          markWsUnregistered();
+          console.error(`[interceptor] context name conflict: '${msg.contextId}' is already registered. Change the context ID in the extension popup.`);
+          setContextConflictBadge(chrome);
+          return;
+        }
+        if (controlType === "context_registered") {
+          markWsRegistered();
+          return;
+        }
         if (msg.id && msg.action) {
           msg._viaWs = true;
           handleDaemonMessage(msg);
@@ -4546,26 +4635,24 @@ function connectWsChannel() {
       }
     };
     ws.onclose = () => {
+      if (wsChannel !== ws)
+        return;
       stopWsKeepAlive();
-      wsReady = false;
+      markWsUnregistered();
       wsChannel = null;
-      if (activeTransport === "websocket")
-        activeTransport = "none";
       scheduleWsReconnect();
     };
     ws.onerror = () => {
+      if (wsChannel !== ws)
+        return;
       stopWsKeepAlive();
-      wsReady = false;
+      markWsUnregistered();
       wsChannel = null;
-      if (activeTransport === "websocket")
-        activeTransport = "none";
       scheduleWsReconnect();
     };
   } catch {
-    wsReady = false;
+    markWsUnregistered();
     wsChannel = null;
-    if (activeTransport === "websocket")
-      activeTransport = "none";
     scheduleWsReconnect();
   }
 }
@@ -4593,10 +4680,9 @@ function registerStorageContextListener() {
       return;
     if (!newId || !wsChannel || wsChannel.readyState !== WebSocket.OPEN)
       return;
-    try {
-      wsChannel.send(JSON.stringify({ type: "extension", contextId: newId }));
-    } catch (err) {
-      console.error("ws context re-register error:", err);
+    const channel = wsChannel;
+    if (!sendWsRegistration(channel, newId)) {
+      closeWsForReconnect(channel);
     }
   });
 }

@@ -193,6 +193,20 @@ final class InterceptorAgent: NSObject, URLSessionWebSocketDelegate, @unchecked 
             return
         }
 
+        if let type = msg["type"] as? String, type == "context_registered" {
+            let ctx = msg["contextId"] as? String ?? contextId
+            flog("context registered: \(ctx)")
+            return
+        }
+
+        if let type = msg["type"] as? String, type == "context_conflict" {
+            let ctx = msg["contextId"] as? String ?? contextId
+            let err = msg["error"] as? String ?? "context is already in use"
+            flog("context conflict: \(ctx) \(err)")
+            emit("native_context_conflict", ["conflictContextId": ctx, "error": err])
+            return
+        }
+
         // Verb request: { id, action }.
         guard let id = msg["id"] as? String, let action = msg["action"] as? [String: Any] else { return }
         let type = action["type"] as? String ?? ""

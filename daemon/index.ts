@@ -18,6 +18,7 @@ import {
   updateSessionMeta,
 } from "../shared/monitor-artifacts"
 import { chooseOutboundTransport, validateContextRouting } from "./outbound-routing"
+import { claimContextId, type ContextSocket } from "./context-registration"
 import { formatBridgeUnavailableError, getBridgeRecoveryActions, getBridgeRecoveryLayout } from "./bridge-recovery"
 import { clearDaemonRuntimeFiles, decideDaemonStartupRole, decideSingletonGate, defaultLifecycleDeps, readPidState, spawnDetachedStandaloneDaemon } from "./lifecycle"
 import { CdpManager, CDP_ACTION_TYPES } from "./cdp/manager"
@@ -747,7 +748,7 @@ function handleNativeMessage(msg: { id?: string; type?: string; [key: string]: u
   }
 }
 
-const extensionWsMap = new Map<string, { send: (data: string) => void }>()
+const extensionWsMap = new Map<string, ContextSocket>()
 // Runtime Agent surface: per-agent metadata for `macos runtime status`.
 // The agent's ws is stored in extensionWsMap under its runtime:<app> contextId so the
 // normal verb-routing / contexts / disambiguation paths work unchanged; this map
@@ -1386,12 +1387,11 @@ function startWsServer(): ReturnType<typeof Bun.serve> {
 
         if (request.type === "extension") {
           const ctxId = request.contextId ?? "default"
-          const oldCtxId = (ws as any).__contextId
-          if (oldCtxId && oldCtxId !== ctxId && extensionWsMap.get(oldCtxId) === ws) {
-            extensionWsMap.delete(oldCtxId)
+          const claim = claimContextId(extensionWsMap, ws as ContextSocket, ctxId)
+          ws.send(JSON.stringify(claim.message))
+          if (claim.status === "conflict") {
+            return
           }
-          ;(ws as any).__contextId = ctxId
-          extensionWsMap.set(ctxId, ws)
           log(`ws extension registered [context: ${ctxId}]`)
           drainWsOutboundQueue(ctxId)
           return
@@ -1404,14 +1404,15 @@ function startWsServer(): ReturnType<typeof Bun.serve> {
         if (request.type === NATIVE_REGISTER_TYPE) {
           const r = request as { contextId?: string; pid?: number; slice?: string; appName?: string; frameworks?: string[]; wayIn?: string }
           const ctxId = r.contextId && r.contextId.startsWith(NATIVE_CONTEXT_PREFIX) ? r.contextId : NATIVE_CONTEXT_PREFIX + (r.contextId ?? "app")
-          const oldCtxId = (ws as any).__contextId
-          if (oldCtxId && oldCtxId !== ctxId && extensionWsMap.get(oldCtxId) === ws) {
-            extensionWsMap.delete(oldCtxId)
-            nativeAgentMeta.delete(oldCtxId)
+          const claim = claimContextId(extensionWsMap, ws as ContextSocket, ctxId)
+          ws.send(JSON.stringify(claim.message))
+          if (claim.status === "conflict") {
+            return
           }
-          ;(ws as any).__contextId = ctxId
+          if (claim.previousContextId) {
+            nativeAgentMeta.delete(claim.previousContextId)
+          }
           ;(ws as any).__native = true
-          extensionWsMap.set(ctxId, ws)
           nativeAgentMeta.set(ctxId, {
             contextId: ctxId,
             appName: r.appName ?? ctxId.slice(NATIVE_CONTEXT_PREFIX.length),
