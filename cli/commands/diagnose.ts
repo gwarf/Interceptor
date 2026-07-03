@@ -26,6 +26,8 @@ import { sendCommand } from "../transport"
 import { listSessions } from "./monitor"
 import { readLockFile, type LockFileData } from "../../daemon/lifecycle"
 import { LOCK_PATH } from "../../shared/platform"
+import { IOS_CONTEXT_PREFIX } from "../../shared/ios-device"
+import { CDP_CONTEXT_PREFIX } from "../../shared/cdp-app"
 
 const NMH_PATHS: Record<string, string> = {
   chrome: `${process.env.HOME}/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.interceptor.host.json`,
@@ -40,9 +42,21 @@ type BinaryMismatch = {
 
 type ContextProbe = {
   contextId: string
+  kind: "extension" | "ios" | "cdp"
   extension: { reachable: boolean; reason?: string }
   tab: { id: number; url: string; title: string } | null
   elements: number | null
+}
+
+// `contexts` returns extension ids plus ios:/cdp: manager contexts. Browser
+// probes (tab_list / get_a11y_tree) only make sense against extension
+// contexts — an ios:/cdp: id appearing in the list is already proof the
+// device/app is connected, and probing it with browser verbs would render a
+// misleading "extension not responding".
+function contextKind(contextId: string | undefined): ContextProbe["kind"] {
+  if (contextId?.startsWith(IOS_CONTEXT_PREFIX)) return "ios"
+  if (contextId?.startsWith(CDP_CONTEXT_PREFIX)) return "cdp"
+  return "extension"
 }
 
 type DiagnoseSnapshot = {
@@ -94,6 +108,19 @@ function detectBinaryMismatches(lock: LockFileData | null): BinaryMismatch[] {
 
 async function probeContext(contextId: string | undefined): Promise<ContextProbe> {
   const label = contextId ?? "default"
+  const kind = contextKind(contextId)
+
+  if (kind !== "extension") {
+    // Presence in the `contexts` list means the manager holds a live
+    // registration for this device/app; report it without browser probes.
+    return {
+      contextId: label,
+      kind,
+      extension: { reachable: true },
+      tab: null,
+      elements: null,
+    }
+  }
 
   const [tabResp, treeResp] = await Promise.all([
     probeWithTimeout(() => sendCommand({ type: "tab_list" }, undefined, contextId)),
@@ -125,7 +152,7 @@ async function probeContext(contextId: string | undefined): Promise<ContextProbe
     elements = (treeResp.result.data.match(/\be\d+\b/g) ?? []).length
   }
 
-  return { contextId: label, extension, tab, elements }
+  return { contextId: label, kind, extension, tab, elements }
 }
 
 export async function runDiagnoseCommand(jsonMode: boolean, contextId?: string): Promise<void> {
@@ -204,6 +231,11 @@ export async function runDiagnoseCommand(jsonMode: boolean, contextId?: string):
     for (const ctx of snap.contexts) {
       if (multiCtx) lines.push(`context ${ctx.contextId}:`)
       const indent = multiCtx ? "  " : ""
+
+      if (ctx.kind !== "extension") {
+        lines.push(`${indent}${ctx.kind === "ios" ? "ios device" : "cdp app"}: connected`)
+        continue
+      }
 
       lines.push(
         `${indent}extension: ${
