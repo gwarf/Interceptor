@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { readLockFile, writeLockFile, clearLockFile, clearDaemonRuntimeFiles, type LockFileData } from "../daemon/lifecycle"
 
-// Lock-file contract (PRD-121): a metadata record for `interceptor diagnose`,
+// Lock-file contract: a metadata record for `interceptor diagnose`,
 // written only by the singleton-gate winner, cleared on every shutdown path.
 // NOT a duplicate-prevention mechanism — that's the WS-port bind (#104).
 
