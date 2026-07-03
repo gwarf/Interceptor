@@ -70,7 +70,7 @@ describe("daemon lifecycle helpers", () => {
 
     clearDaemonRuntimeFiles(deps, "stale pid 222")
 
-    expect(deps.unlinked).toEqual([deps.socketPath, deps.pidPath])
+    expect(deps.unlinked).toEqual([deps.socketPath, deps.pidPath, deps.lockPath])
     expect(deps.files.has(deps.pidPath)).toBe(false)
     expect(deps.files.has(deps.socketPath)).toBe(false)
   })
