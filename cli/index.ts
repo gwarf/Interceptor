@@ -1,4 +1,7 @@
-import { HELP, helpForCommand } from "./help"
+import { HELP, shortHelp, fullHelp, helpForCommand } from "./help"
+import { detectSurfaces, SURFACE_UPGRADE_HINT } from "./lib/surfaces"
+import { runSkillsCommand, maybeEmitSkillsHint } from "./commands/skills"
+import { runManifestCommand } from "./manifest"
 import { parseTabFlag, parseContextFlag, parseGroupFlag, parseGroupColorFlag } from "./parse"
 import { formatState, formatTabs, formatCookies, formatResult } from "./format"
 import { sendCommand, sendCommandWs, setGlobalGroup, type DaemonResult, type DaemonResponse } from "./transport"
@@ -35,6 +38,7 @@ import { runResearchCommand } from "./commands/research"
 import { runExtensionsCommand } from "./commands/extensions"
 import { VERSION, BUILD_SHA, BUILD_DATE } from "./version"
 import { buildFilteredArgs } from "./global-flags"
+import { normalizeArgs } from "./normalize"
 
 // Command → module routing
 const STATE_CMDS = new Set(["state", "tree", "diff", "find", "text", "html"])
@@ -61,11 +65,13 @@ const UPGRADE_CMDS = new Set(["upgrade"])
 const INIT_CMDS = new Set(["init"])
 const RESEARCH_CMDS = new Set(["research"])
 const EXTENSIONS_CMDS = new Set(["extensions"])
+const SKILLS_CMDS = new Set(["skills"])
+const MANIFEST_CMDS = new Set(["manifest"])
 
 // Commands that don't require a daemon connection (or, in init's case,
 // bootstrap it themselves rather than relying on the pre-dispatch auto-spawn).
 // `research` prints guidance / manages an on-disk ledger — no browser, no daemon.
-const NO_DAEMON = new Set(["status", "help", "events", "session", "upgrade", "init", "research", "extensions"])
+const NO_DAEMON = new Set(["status", "help", "events", "session", "upgrade", "init", "research", "extensions", "skills", "manifest"])
 
 // Every command the CLI dispatches. Used to reject unknown commands
 // before any daemon-spawning side effect runs.
@@ -75,6 +81,7 @@ const ALL_KNOWN_CMDS = new Set<string>([
   ...SAVE_CMDS, ...BRAND_CMDS, ...GROUP_CMDS, ...BATCH_CMDS, ...MONITOR_CMDS, ...SCENE_CMDS, ...SSE_CMDS,
   ...COMPOUND_CMDS, ...OVERRIDE_CMDS, ...MACOS_CMDS, ...IOS_CMDS,
   ...UPGRADE_CMDS, ...INIT_CMDS, ...RESEARCH_CMDS, ...EXTENSIONS_CMDS,
+  ...SKILLS_CMDS, ...MANIFEST_CMDS,
   "help", "contexts",
 ])
 
@@ -115,10 +122,26 @@ async function main() {
   // by position: `--json` at index 0 or 1 is the global boolean (it's
   // always near the front, like `interceptor --json status`); deeper
   // occurrences are always domain value flags consumed by the parser.
-  const filtered = buildFilteredArgs(args)
+  let filtered = buildFilteredArgs(args)
 
+  // progressive disclosure. Bare invocation and `help` print the
+  // concise tier-0 card; `help <cmd>` prints one command's contract; `help
+  // --all` prints the exhaustive reference filtered to installed surfaces.
   if (filtered.length === 0 || filtered[0] === "help") {
-    console.log(HELP)
+    const helpArg = filtered[1]
+    if (helpArg && !helpArg.startsWith("-")) {
+      const sub = helpForCommand(helpArg)
+      if (sub) {
+        console.log(sub)
+      } else {
+        console.error(`error: no help for '${helpArg}'. Run 'interceptor help --all' for the full reference.`)
+        process.exit(1)
+      }
+    } else if (filtered.includes("--all")) {
+      console.log(fullHelp(detectSurfaces(args)))
+    } else {
+      console.log(shortHelp(detectSurfaces(args)))
+    }
     return
   }
 
@@ -139,10 +162,21 @@ async function main() {
 
   const cmd = filtered[0]
 
+  // rewrite argv to [cmd, ...positionals, ...flags] so flag
+  // position never changes meaning (e.g. `open --text-only <url>` used to
+  // create a tab whose URL was literally "--text-only"). macos/ios pass
+  // through untouched — see cli/normalize.ts.
+  filtered = normalizeArgs(filtered)
+
   // Per-command --help / -h short-circuit. `interceptor open --help` prints
   // the open-specific help block; `interceptor --help` (no command) falls
   // back to the full HELP. Runs before any daemon-spawn side effect.
   if (filtered.includes("--help") || filtered.includes("-h")) {
+    // Bare `interceptor --help` (no command) prints the tier-0 card.
+    if (cmd.startsWith("-")) {
+      console.log(shortHelp(detectSurfaces(args)))
+      return
+    }
     if (cmd === "macos" && (filtered[1] === "cdp" || filtered[1] === "runtime")) {
       await runMacosCommand(filtered, { jsonMode, useWs, globalTabId, contextId: globalContextId })
       return
@@ -159,7 +193,7 @@ async function main() {
     if (sub) {
       console.log(sub)
     } else {
-      console.log(HELP)
+      console.log(shortHelp(detectSurfaces(args)))
     }
     return
   }
@@ -168,6 +202,21 @@ async function main() {
     console.error(`error: unknown command '${cmd}'. Run 'interceptor help' for usage.`)
     process.exit(1)
   }
+
+  // fail fast (before any daemon spawn) when a surface is not
+  // part of this install. Override with --all-surfaces / INTERCEPTOR_ALL_SURFACES.
+  if (MACOS_CMDS.has(cmd) || IOS_CMDS.has(cmd)) {
+    const surfaces = detectSurfaces(args)
+    const available = MACOS_CMDS.has(cmd) ? surfaces.macos : surfaces.ios
+    if (!available) {
+      console.error(`error: ${SURFACE_UPGRADE_HINT}`)
+      process.exit(1)
+    }
+  }
+
+  // one rate-limited stderr hint when installed skill packs are
+  // not linked into detected AI runtimes (fires after installs and updates).
+  if (cmd !== "skills" && cmd !== "manifest") maybeEmitSkillsHint(args)
 
   let needsDaemon = !NO_DAEMON.has(cmd)
   if (cmd === "monitor" && filtered[1] && MONITOR_LOCAL_SUBCOMMANDS.has(filtered[1])) {
@@ -211,6 +260,16 @@ async function main() {
 
   if (EXTENSIONS_CMDS.has(cmd)) {
     runExtensionsCommand(filtered, jsonMode)
+    return
+  }
+
+  if (SKILLS_CMDS.has(cmd)) {
+    runSkillsCommand(filtered, jsonMode)
+    return
+  }
+
+  if (MANIFEST_CMDS.has(cmd)) {
+    runManifestCommand(args)
     return
   }
 

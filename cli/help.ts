@@ -3,6 +3,8 @@
 // runs `interceptor <cmd> --help` mid-task — often without the skill reference
 // loaded — so this block carries everything needed to form a correct invocation
 // in one shot (flags, accepted inputs, response shape, an example).
+import { COMMAND_SPECS } from "./manifest"
+
 const COMMAND_HELP: Record<string, string> = {
   save: [
     "interceptor save — write page-produced bytes to disk (no downloads shelf, Save dialog, clipboard, or CDP)",
@@ -35,10 +37,18 @@ const COMMAND_HELP: Record<string, string> = {
 // "  interceptor <cmd> ". User types `interceptor <cmd> --help` (or `-h`) and
 // gets exactly the slice for that command.
 export function helpForCommand(cmd: string): string | null {
-  const footer = `Run 'interceptor help' for the full command list, or 'interceptor ${cmd} -h' is an alias for --help.`
+  const footer = `Run 'interceptor help --all' for the full command list, or 'interceptor ${cmd} -h' is an alias for --help.`
+  // per-verb returns semantics from the manifest spec, so an
+  // agent forming an invocation also learns exactly what comes back.
+  const spec = COMMAND_SPECS.find(s => s.name === cmd)
+  const semantics: string[] = []
+  if (spec) {
+    semantics.push("", `Returns: ${spec.returns}`)
+    if (spec.example) semantics.push(`Example: ${spec.example}`)
+  }
   const curated = COMMAND_HELP[cmd]
   if (curated) {
-    return [curated, "", footer].join("\n")
+    return [curated, ...semantics, "", footer].join("\n")
   }
   const lines = HELP.split("\n")
   const matched: string[] = []
@@ -53,12 +63,96 @@ export function helpForCommand(cmd: string): string | null {
     `interceptor ${cmd} — usage`,
     "",
     ...matched,
+    ...semantics,
     "",
     footer,
   ].join("\n")
 }
 
-export const HELP = `interceptor — browser control CLI
+// ── progressive disclosure ─────────────────────────────────────
+// Tier 0 (shortHelp): bare `interceptor`, `interceptor --help`, `interceptor help`.
+//   A CAPABILITY MAP, not a teaser — EVERY verb on every installed surface, one
+//   line each, so an AI agent with no skill pack loaded learns the full
+//   out-of-box surface in a single read. Flags/response-shapes live one level
+//   down (`help <cmd>` / `manifest`) so the map stays scannable but hides nothing.
+// Tier 1: `interceptor help <cmd>` / `interceptor <cmd> --help` (helpForCommand).
+// Tier 2 (`help --all`): the exhaustive per-flag dump, filtered to installed surfaces.
+
+const MAP_HEADER = `interceptor — drive a real browser, macOS, and iPhone from one CLI (built for AI agents)
+
+You operate a signed-in browser session — and, on the full install, native macOS
+apps and a physical iPhone — by reading accessibility trees + text and acting on
+element refs (not blind pixel taps). Everything below works now; no skill pack
+needed. Go deeper on any verb:
+  interceptor help <command>     One command's full contract: flags, inputs, what it returns
+  interceptor manifest           Machine-readable JSON — every verb + its exact return shape
+  interceptor help --all         Exhaustive per-flag reference for every installed surface
+  interceptor skills adopt       Install the deep skill-pack playbooks into your AI runtime`
+
+const MAP_BROWSER = `BROWSER — a signed-in Chrome/Brave profile, background tabs by default:
+  Compound   open <url> · read [ref] · act <ref> ["text"] · inspect     one-call open / read / act / debug
+  Read text  text (visible innerText) · text --markdown (keeps headings/tables) · html <ref> (raw markup)
+  Structure  tree (a11y refs to act on) · find "<name>" (elements by name) · search "<q>" (full-text) · state · diff
+  Extract    table · links · images · forms · query <css> · exists · count · attr · style      structured JSON
+  Act        act <ref> · click · type · select · focus · hover · drag · dblclick · rightclick · check · keys · scroll
+  Navigate   navigate <url> · back · forward · scroll · wait <ms> · wait-stable
+  Tabs       tabs · tab new|close|switch · window · frames · session · group (per-agent isolation) · contexts
+  Network    net (passive log → HAR/pcapng) · headers · override (rewrite requests) · sse
+  Capture    screenshot [ref] · canvas · ocr · save --out <path> <expr>  (page bytes straight to disk) · eval <js> (CSP-proof)
+  Data       cookies · storage · history · bookmarks · downloads · clipboard · clear
+  Record     monitor (record → replay) · scene (canvas / rich editors) · batch (many actions, one call) · brand`
+
+const MAP_MACOS = `MACOS — native apps via the accessibility tree, background-first (no focus steal unless you pass --activate):
+  Compound   macos open <app> · macos read · macos act <ref> ["text"] · macos inspect
+  AX+input   macos tree · find · value · action · focused · windows · move · resize · click · type · keys · scroll · drag
+  Apps       macos apps · app activate|hide|quit|launch · frontmost · menu "<path>"
+  Capture    macos screenshot (occluded/minimized windows too) · capture · stream · display
+  Scripts    macos script run --jxa|--jsc|--script · intent dispatch (Apple Events, no foregrounding)
+  System     macos clipboard · notifications · files · fs read|write|search · url · log query
+  Media/AI   macos vision (OCR any window) · listen (speech-to-text) · nlp · ai prompt · audio · sounds
+  Docs/data  macos pdf · detect · translate · thumbnail · calendar · reminders · contacts · photos · location · music · maps · share
+  Electron   macos cdp discover|connect|app attach     drive an Electron/Chromium app's web contents
+  Runtime    macos runtime enable|tree|read|eval|mutate     in-process control of a running native app
+  Trust      macos trust     permission status + Accessibility/Screen/Microphone prompts`
+
+const MAP_IOS = `iOS — automate a physical iPhone over WiFi (on-device XCUITest runner, no cable once paired):
+  Drive      ios tree · find · inspect       on-screen elements + refs (auto-connects on first verb)
+  Input      ios click · type · keys · scroll · drag · press       trusted XCUITest input
+  Apps       ios screenshot · apps · app launch|activate|terminate · devices · name
+  Setup      ios install | login | setup     one-time: put the InterceptorRunner on the phone
+  Connection model (read this before you panic about 'connected: false'):
+    • Phone must be owned, unlocked, in Developer Mode, and WiFi-paired to this Mac.
+    • 'ios devices' showing "connected: false" is NORMAL when idle — it means "installed,
+      auto-connects on the next verb", NOT "broken". Just run a verb (e.g. 'ios tree --on <name>').
+    • Keep the phone unlocked and awake while driving — auto-lock drops the runner.
+    • 'interceptor help ios' / 'ios help' has the full setup + troubleshooting flow.`
+
+const MAP_UPGRADE = `macOS + iPhone control are NOT enabled on this browser-only install:
+  interceptor upgrade --full     Add native macOS + iPhone control (macOS host only)`
+
+const MAP_FOOTER = `LOCAL (no browser needed):
+  status · init · skills (adopt packs into Claude Code / Codex / ~/.agents) · manifest · research · upgrade · help
+
+GLOBAL FLAGS (any command, any position — flag order never changes meaning):
+  --json  --context <id>  --tab <id>  --group <label>  --frame <id>  --all-surfaces
+  e.g. 'open --text-only <url>' ≡ 'open <url> --text-only'
+
+Docs & issues: https://github.com/Hacker-Valley-Media/Interceptor`
+
+/** Tier-0 capability map, gated to the surfaces this install actually has. */
+export function shortHelp(surfaces: { macos: boolean; ios: boolean }): string {
+  const parts = [MAP_HEADER, MAP_BROWSER]
+  if (surfaces.macos) parts.push(MAP_MACOS)
+  if (surfaces.ios) parts.push(MAP_IOS)
+  if (!surfaces.macos && !surfaces.ios) parts.push(MAP_UPGRADE)
+  parts.push(MAP_FOOTER)
+  return parts.join("\n\n")
+}
+
+// Static all-surfaces fallback for callers/tests that don't detect surfaces.
+export const SHORT_HELP = shortHelp({ macos: true, ios: true })
+
+const HELP_BROWSER = `interceptor — browser control CLI
 
 Flags:
   -V, --version                       Print version, build SHA, and build date
@@ -72,7 +166,7 @@ Compound (agent-optimized):
   interceptor open <url> --activate          Foreground the new tab (explicit opt-in; background-first contract)
   interceptor open <url> --tree-only         Skip text, return only tree
   interceptor open <url> --text-only         Skip tree, return only text
-  interceptor open <url> --full              Full text instead of 2000-char summary
+  interceptor open <url> --full              Full text (200K cap) instead of the 8000-char summary
   interceptor open <url> --timeout <ms>      Override wait-stable timeout (default 5000)
   interceptor open <url> --no-wait           Return immediately after tab creation
   interceptor open <url> --reuse             Navigate the most recent Interceptor-group tab instead of opening a new one (cleans up long automation runs)
@@ -306,7 +400,13 @@ Meta:
   interceptor status                         Check daemon status (local — no connection needed)
   interceptor status --verbose               Daemon + bridge + extension probe with per-component diagnostics
   interceptor status --explain               Alias for --verbose with extra rationale per component
-  interceptor help                           This help text
+  interceptor help [<command>|--all]         Concise help / one command's contract / the full reference
+  interceptor manifest                       Machine-readable capability manifest (verbs, flags, returns, skills)
+  interceptor skills list                    Skill packs shipped with this install + adoption state
+  interceptor skills status                  Per-runtime link state (linked / stale-copy / foreign / missing)
+  interceptor skills show <name>             One skill's purpose + which text verb returns what
+  interceptor skills adopt [names…] [--into claude,codex,agents] [--all] [--force]
+                                             Symlink skill packs into AI runtimes (junctions on Windows)
 
 Branding:
   interceptor brand tab-group --title <label> [--color <color>]
@@ -315,9 +415,9 @@ Branding:
 Tab groups (per-agent isolation):
   interceptor open <url> --group <label>     Open into the named group "<brand>-<label>" (created on first use)
   interceptor group list                     All live tab groups: label, title, color, tab count
-  interceptor group close <label>            Atomically close every tab in a named group (other groups untouched)
+  interceptor group close <label>            Atomically close every tab in a named group (other groups untouched)`
 
-macOS App Internals:
+const HELP_MACOS = `macOS App Internals:
   interceptor macos cdp connect <port> [--host H] [--app NAME] [--url HINT]
                                              Attach to an Electron/Chromium app debug port
   interceptor macos cdp discover             List running Electron/Chromium apps + CDP/debug-port status
@@ -522,9 +622,9 @@ macOS Bridge (full install only):
   Notifications (UN extension to existing notifications domain):
   interceptor macos notifications status|request|settings|post|schedule-after|schedule-at|schedule-cron|cancel|cancel-all|pending|delivered|dismiss|dismiss-all
   interceptor macos notifications post --title "..." --body "..." [--sound default] [--badge N] [--category <id>]
-  interceptor macos notifications categories list|register|clear
+  interceptor macos notifications categories list|register|clear`
 
-  iOS — automate your iPhone (pre-built agent, no signing/env):
+const HELP_IOS = `  iOS — automate your iPhone (pre-built agent, no signing/env):
   interceptor ios install [<device>]         Push the agent to a phone (plugged in + unlocked)
   interceptor ios devices                     Phones with the agent (+ names)
   interceptor ios name <device> <alias>       Rename a phone (then use --on <alias>)
@@ -532,3 +632,18 @@ macOS Bridge (full install only):
   interceptor ios click|type|keys|scroll|drag|press [--on <name>]   Trusted XCUITest input
   interceptor ios screenshot | apps | app launch|activate|terminate <id> [--on <name>]
   Run 'interceptor ios help' for the full iOS surface.`
+
+// Back-compat: the complete dump (all surfaces), used by helpForCommand's
+// line-grep and by `help --all` on full installs.
+export const HELP = [HELP_BROWSER, HELP_MACOS, HELP_IOS].join("\n\n")
+
+/** Tier-2 help filtered to the surfaces present on this install. */
+export function fullHelp(surfaces: { macos: boolean; ios: boolean }): string {
+  const parts = [HELP_BROWSER]
+  if (surfaces.macos) parts.push(HELP_MACOS)
+  if (surfaces.ios) parts.push(HELP_IOS)
+  if (!surfaces.macos || !surfaces.ios) {
+    parts.push("macos/ios: not available in this install — 'interceptor upgrade --full' adds computer-use mode (macOS only).")
+  }
+  return parts.join("\n\n")
+}

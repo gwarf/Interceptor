@@ -156,6 +156,16 @@ if [[ -n "$TARGET_UID" && -f "$LAUNCH_AGENT_PATH" ]]; then
   bootstrap_bridge_launchagent "$TARGET_UID" || true
 fi
 
+# ── skills-refresh marker ────────────────────────────────────────
+# Written on every install AND every (Sparkle-driven) update. The CLI's
+# rate-limited skills hint uses live filesystem probing; this marker records
+# what shipped and when, for `interceptor skills status --json` consumers and
+# debugging. Failure here must never fail the install.
+{
+  printf 'installed_at=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  printf 'skills=%s\n' "$(ls "$INSTALL_ROOT/skills" 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
+} >"$INSTALL_ROOT/.skills-refresh" 2>/dev/null || true
+
 # ── remove obsolete iOS tunnel LaunchDaemon from older installs ──────
 # The no-Xcode iOS path now uses the daemon's unprivileged CoreDeviceProxy
 # userspace tunnel. New packages do not stage com.interceptor.ios-tunnel; upgrades

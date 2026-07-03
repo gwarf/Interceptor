@@ -113,7 +113,22 @@ Drive a phone (add --on <name>, or it uses your only phone):
   apps                                       installed apps
   app     launch|activate|terminate <id>     app lifecycle
 
-Phones connect automatically — no enable, no plugging in required once paired over WiFi.
+Connection model (how the runner reaches the phone):
+  • The phone runs an on-device XCUITest runner (InterceptorRunner) that DIALS IN
+    to the daemon over WiFi. There is no persistent socket held open while idle.
+  • 'devices' shows "connected: false" whenever the runner isn't actively dialed in.
+    That is the NORMAL idle state for a correctly-installed phone — it means
+    "installed, will auto-connect on the next verb", NOT "broken" or "offline".
+  • You do NOT need to connect manually. Just run a verb — e.g.
+    'interceptor ios tree --on <name>' — and the daemon launches the runner and
+    the phone dials in. 'connected' flips to true for the life of that session.
+  • Keep the phone UNLOCKED and AWAKE while driving. Auto-lock / sleep tears the
+    runner down (you'll see connected:false again and the next verb re-launches).
+  • If a verb hangs or times out: confirm the phone is unlocked, on the same
+    network, and reachable — 'interceptor ios status' shows the live context and
+    'xcrun devicectl list devices' shows whether macOS sees it as "available".
+
+Phones connect automatically — no enable, no cable required once paired over WiFi.
 Drives UI only: can't pass Face ID/passcode/Apple Pay or unlock the phone.`
 
 export async function runIosCommand(

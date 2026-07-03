@@ -119,11 +119,21 @@ describe("helpForCommand (#51)", () => {
     expect(r.stdout).toContain("interceptor act <ref>")
   })
 
-  test("CLI: bare `--help` falls back to full HELP", () => {
+  test("CLI: bare `--help` prints the tier-0 capability map", () => {
     const r = runCli(["--help"])
     expect(r.status).toBe(0)
-    expect(r.stdout).toContain("interceptor — browser control CLI")
-    expect(r.stdout).toContain("Compound (agent-optimized)")
+    expect(r.stdout).toContain("drive a real browser, macOS, and iPhone")
+    expect(r.stdout).toContain("interceptor help --all")
+    // A capability MAP: every surface's verbs are named so a skill-less agent
+    // knows the full out-of-box surface — but flag-level detail stays deferred.
+    expect(r.stdout).toContain("BROWSER")
+    expect(r.stdout).toContain("open <url>")
+    expect(r.stdout).toContain("net")
+    expect(r.stdout).toContain("interceptor manifest")
+    // still far smaller than the exhaustive per-flag dump behind --all
+    const all = runCli(["help", "--all"])
+    expect(r.stdout.length).toBeLessThan(all.stdout.length)
+    expect(r.stdout).not.toContain("Compound (agent-optimized)")
   })
 
   test("CLI: nested macos cdp/app help short-circuits without spawning daemon", () => {

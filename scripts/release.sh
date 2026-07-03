@@ -450,6 +450,8 @@ if [[ "$BUILD_FULL" == "1" ]]; then
   run chmod 644 "$STAGING_DIR/daemon-full/Library/LaunchAgents/com.interceptor.bridge.plist"
   run ditto "$REPO_ROOT/.agents/skills/interceptor-macos" \
     "$STAGING_DIR/daemon-full/$DEST_SUPPORT_DIR/skills/interceptor-macos"
+  run ditto "$REPO_ROOT/.agents/skills/interceptor-ios" \
+    "$STAGING_DIR/daemon-full/$DEST_SUPPORT_DIR/skills/interceptor-ios"
 
   if [[ "$INCLUDE_AGENT_DYLIBS" == "1" ]]; then
     # Runtime Agent surface (research profile): ship the agent dylib(s) at

@@ -353,17 +353,23 @@ export class IosManager {
         name: d.name,
         alias: aliasForUdid(d.udid),
         udid: d.udid,
+        // `connected` = a runner session is dialed in RIGHT NOW. It is false
+        // whenever the phone is idle; that is the normal ready state, not an
+        // error — the runner auto-launches and dials in on the next verb.
         connected: this.contexts.has(iosContextId(d.udid)),
         transport: d.transport ?? "unknown",
         productVersion: d.productVersion,
       }))
+    const anyIdle = out.some((d) => !d.connected)
     return {
       success: true,
       data: {
         devices: out,
         ...(out.length === 0
           ? { note: "no devices have the Interceptor agent yet — plug your iPhone in (unlocked) and run: interceptor ios install" }
-          : {}),
+          : anyIdle
+            ? { note: "connected:false is the normal idle state — the on-device runner auto-connects on the next verb (e.g. 'interceptor ios tree --on <name>'). Keep the phone unlocked & awake while driving." }
+            : {}),
       },
     }
   }
