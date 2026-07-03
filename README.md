@@ -39,6 +39,7 @@ Interceptor gives agents human-style control of the tools you already use — **
 
 - **Interceptor Browser** — runs as a Chrome extension inside your actual browser. Your cookies, sessions, logins, and tabs stay intact. Read pages, click, type, navigate, observe network traffic, automate rich editors, record-and-replay user flows.
 - **Interceptor macOS** — runs as a Swift bridge daemon. Drives native macOS apps the same way: structured accessibility trees, OS-level trusted input, on-device vision/speech/NLP, system-wide event monitoring.
+- **Interceptor iOS** *(new)* — drives any installed app on an owned, unlocked, Developer-Mode iPhone via an on-device XCUITest runner that dials into the daemon over WiFi. Ref-tagged element trees, deterministic coordinate taps, reliable text entry, screenshots, and app lifecycle — addressed as `--on <phone>` / `ios:<udid>`. See `interceptor ios help`.
 
 The agent calls `interceptor` CLI commands, reads the output, and decides what to do next. No MCP required. No API keys required.
 
@@ -157,10 +158,11 @@ Interceptor ships one CLI binary with two product surfaces. Pick by what you're 
 | Real-time speech, sound classification, OCR, on-device NLP/LLM | macOS | `interceptor macos listen / sounds / vision / nlp / ai` |
 | Record & replay a human's native-app flow | macOS | `interceptor macos monitor *` |
 | Drive Apple Events to background apps without raising them | macOS | `interceptor macos intent dispatch` |
+| Drive any app on an owned, unlocked iPhone (tree/tap/type/screenshot/app lifecycle) | iOS | `interceptor ios tree / find / click / type / screenshot / app *` |
 
-If the task is content **inside** a browser tab, use Browser. If the task is the **shell** the browser runs inside (or any other macOS app), use macOS.
+If the task is content **inside** a browser tab, use Browser. If the task is the **shell** the browser runs inside (or any other macOS app), use macOS. If the task is an app on your **iPhone**, use iOS.
 
-The deep dives live in the per-surface sections below. Skill packages mirror this split: agent operators load `.agents/skills/interceptor-browser/` for web work and `.agents/skills/interceptor-macos/` for native work.
+The deep dives live in the per-surface sections below. Skill packages mirror this split: agent operators load `.agents/skills/interceptor-browser/` for web work, `.agents/skills/interceptor-macos/` for native work, and `.agents/skills/interceptor-ios/` for iPhone work.
 
 ---
 
@@ -220,6 +222,7 @@ bash scripts/build.sh
 bash scripts/install.sh --browser-only --brave --profile Default   # browser only, no TCC
 bash scripts/install.sh --full --brave --profile Default           # browser + macOS bridge
 bash scripts/install.sh --brave --profile Default                  # interactive prompt
+bash scripts/install.sh --chrome-beta --browser-only               # a Chrome channel (also --chrome-canary/--chrome-dev/--chrome-for-testing)
 bash scripts/install.sh --full --dry-run                           # print steps without running
 ```
 
@@ -248,14 +251,18 @@ mkdir -p ~/.local/bin
 ln -sf "$PWD/dist/interceptor" ~/.local/bin/interceptor
 ```
 
-#### Chrome Development Path
+#### Chrome channels & the Development Path
 
-Google Chrome ignores `--load-extension` in branded desktop builds. `scripts/install.sh --chrome` still writes the native messaging manifest, but load the extension manually:
+`scripts/install.sh` can target any Chrome channel: `--chrome` (stable), `--chrome-beta`, `--chrome-canary`, `--chrome-dev`, and `--chrome-for-testing` (macOS; Linux deferred, same as the Edge/Vivaldi gap).
+
+All **branded** Google Chrome builds — stable, Beta, Canary, and Dev — ignore `--load-extension` in desktop builds (Chrome 137+ removed the switch for branded builds). For those, `scripts/install.sh` still writes the native messaging manifest, but load the extension manually:
 
 1. Open Chrome and navigate to `chrome://extensions`
 2. Enable **Developer mode**
 3. Click **Load unpacked**
 4. Select `extension/dist/`
+
+**Chrome for Testing** is Google's unbranded automation build and *does* respect `--load-extension`, so `--chrome-for-testing` loads the extension automatically. Two caveats: its native-messaging host directory is `~/Library/Application Support/Google/ChromeForTesting/` as of Chrome 146 (the installer writes there), and it is typically installed as a standalone binary rather than into `/Applications`, so auto-detection may not find it — pass `--chrome-for-testing` explicitly.
 
 #### Uninstall
 
@@ -312,7 +319,7 @@ The legacy individual commands (`interceptor tab new`, `interceptor tree`, `inte
 
 **Focus Model (Background-First Contract)** — Interceptor never steals focus from the tab you're working in. `interceptor open <url>` and `interceptor tab new <url>` create their tabs in the **background** by default — the tab you had active stays active. Only four browser verbs intentionally move focus: `open --activate`, `tab new --activate`, `tab switch <id>`, and `window focus <id>`. The reuse path preserves the reused tab's existing focus state; add `--activate` to bring it forward. All other operations (`click`, `type`, `read`, `screenshot`, `net`, `scene`, `monitor`, etc.) work against the target tab without touching whichever tab you're looking at. This mirrors the macOS surface's same background-first contract — see `AGENTS.md` "Background First (Browser + macOS)" for the full inventory.
 
-**Named Contexts** — When two browser profiles (or Chrome + Brave) both connect to the same daemon, the daemon tracks each extension as a separate named context. Each profile's extension auto-generates a stable UUID on first run (stored in `chrome.storage.local`). Run `interceptor contexts` to list connected IDs, then pass `--context <id>` to route a command to a specific profile. Without `--context`, a command succeeds only when exactly one context is connected — the daemon errors (fail-fast) when zero or multiple contexts are present. Primary use case: cross-account security testing where you need Account A and Account B active simultaneously.
+**Named Contexts** — When two browser profiles (or Chrome + Brave) both connect to the same daemon, the daemon tracks each extension as a separate named context. Each profile's extension auto-generates a stable UUID on first run (stored in `chrome.storage.local`). Run `interceptor contexts` to list connected IDs, then pass `--context <id>` to route a command to a specific profile. Without `--context`, a command succeeds only when exactly one context is connected — the daemon errors (fail-fast) when zero or multiple contexts are present. Primary use case: cross-account security testing where you need Account A and Account B active simultaneously. If two profiles are configured with the same context ID, the second profile is rejected and the extension shows a red `!` badge; open that profile's Interceptor popup, choose a unique Context ID, and it will re-register without needing an extension reload.
 
 **Passive Network** — `fetch()` and `XMLHttpRequest` traffic on every page is captured automatically. SSE streams are exposed with `interceptor sse log`. WebSocket, Beacon, and BroadcastChannel activity is captured as page communication with `interceptor net page-comm log`; use `interceptor net monitor on --reload` when you need sockets opened during page startup. No debugger, no infobanner.
 
@@ -411,6 +418,12 @@ interceptor tab close                        # Close current tab
 interceptor tab close 12345                  # Close specific tab
 interceptor window new "https://example.com" # New window
 interceptor window list                      # List all windows
+interceptor window focus 123                 # Focus a window (explicit focus move)
+interceptor window resize 123 1200 800       # Resize by ID
+interceptor window resize 123 --left 0 --top 0 --width 960 --height 1080
+                                             # Move + resize by ID
+interceptor window resize --state maximized  # State change for current window; do not combine
+                                             # maximized/fullscreen/minimized with geometry
 ```
 
 ### Network — Passive Capture (always on)

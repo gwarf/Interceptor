@@ -18,12 +18,34 @@ export const INTERCEPTOR_TIMEOUT_MS = parseInt(process.env.INTERCEPTOR_TIMEOUT |
 const ACTION_TIMEOUT_OVERRIDES_MS: Record<string, number> = {
   macos_listen: 60_000,
   macos_vad: 60_000,
+  // monitor start/stop can do non-trivial setup/teardown (AX
+  // attach across many apps under --all-apps, frame/video/speech engines,
+  // source snapshot). Even though the bridge now acks early, give the
+  // RPC an elevated deadline as a safety margin so a momentarily busy main
+  // run loop never trips the old 15s timeout that left a split-brain envelope.
+  macos_monitor: 60_000,
+  // iOS XCUITest AX ops (element-tree snapshot, app activate/launch, typing) are
+  // slow — the first snapshot initializes the on-device accessibility bridge and
+  // waits for app quiescence. Give them an elevated deadline.
+  ios_tree: 60_000,
+  ios_find: 60_000,
+  ios_app: 60_000,
+  ios_type: 60_000,
+  ios_screenshot: 60_000,
+  ios_setup: 600_000,
+  ios_refresh: 600_000,
+  ios_enable: 120_000,
+  ios_install: 240_000,
   screenshot: 45_000,
+  binary_sink_save: 600_000,
   screenshot_background: 45_000,
   canvas_read: 45_000,
-  canvas_ocr: 45_000,
+  canvas_ocr: 60_000,
   canvas_diff: 45_000,
   capture_frame: 45_000,
+  // OCR: native capture + Tesseract. First call also lazy-loads the WASM core +
+  // language data, so allow generous headroom.
+  ocr: 60_000,
 }
 
 function pickTimeoutForAction(actionType: string): number {
@@ -37,6 +59,9 @@ function timeoutMessage(actionType: string, ms: number): string {
   if (actionType.startsWith("macos_")) {
     return `timeout: no response for '${actionType}' after ${seconds}s. The macOS bridge may be waiting on a TCC permission prompt (Microphone / Speech Recognition for listen/vad, Screen Recording for screenshot/capture/vision). Check System Settings → Privacy & Security.`
   }
+  if (actionType.startsWith("ios_")) {
+    return `timeout: no response for '${actionType}' after ${seconds}s. The InterceptorRunner may be busy with a slow XCUITest snapshot or a non-quiescing app; confirm the device is unlocked and 'interceptor ios status' shows it connected.`
+  }
   return `timeout: no response for '${actionType}' after ${seconds}s. Ensure Chrome/Brave is open with the Interceptor extension loaded.`
 }
 
@@ -47,7 +72,28 @@ export type DaemonResponse = {
   result: DaemonResult
 }
 
-export function sendCommand(action: Action, tabId?: number, contextId?: string): Promise<DaemonResponse> {
+// the per-invocation group scope (--group / $INTERCEPTOR_GROUP), set once
+// by cli/index.ts and injected into every outgoing action here — the single choke
+// point every command path (simple, compound, override, tail loops) funnels
+// through. The group rides INSIDE the action payload because the daemon relays
+// `{id, action, tabId}` verbatim to the extension.
+let globalGroup: string | undefined
+let globalGroupColor: string | undefined
+
+export function setGlobalGroup(group?: string, groupColor?: string): void {
+  globalGroup = group
+  globalGroupColor = groupColor
+}
+
+function withGroup(action: Action): Action {
+  if (!globalGroup || action.group !== undefined) return action
+  const scoped: Action = { ...action, group: globalGroup }
+  if (globalGroupColor && scoped.groupColor === undefined) scoped.groupColor = globalGroupColor
+  return scoped
+}
+
+export function sendCommand(rawAction: Action, tabId?: number, contextId?: string): Promise<DaemonResponse> {
+  const action = withGroup(rawAction)
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID()
     const shortId = id.slice(0, 8)
@@ -116,7 +162,8 @@ export function sendCommand(action: Action, tabId?: number, contextId?: string):
   })
 }
 
-export function sendCommandWs(action: Action, tabId?: number, contextId?: string): Promise<DaemonResponse> {
+export function sendCommandWs(rawAction: Action, tabId?: number, contextId?: string): Promise<DaemonResponse> {
+  const action = withGroup(rawAction)
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID()
     const shortId = id.slice(0, 8)

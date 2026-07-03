@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { IS_WIN, SOCKET_PATH, PID_PATH, transportLabel } from "../../shared/platform"
+import { skillsStatusSummary } from "../commands/skills"
 
 export type StatusSnapshot = {
   mode: "browser-only" | "full" | "unknown"
@@ -38,6 +39,11 @@ export type StatusSnapshot = {
     probed: boolean
     reachable: boolean
     reason?: string
+  }
+  // skills-adoption block — pack presence + per-runtime link counts
+  skills?: {
+    packDir: string | null
+    targets: Array<{ id: string; linked: number; total: number }>
   }
 }
 
@@ -121,6 +127,19 @@ export function readStatusSnapshot(): StatusSnapshot {
     mode = "browser-only"
   }
 
+  let skills: StatusSnapshot["skills"]
+  try {
+    const summary = skillsStatusSummary()
+    if (summary.packDir) {
+      skills = {
+        packDir: summary.packDir,
+        targets: summary.targets.map(t => ({ id: t.id, linked: t.linked, total: t.total })),
+      }
+    }
+  } catch {
+    // status must never fail because of skills probing
+  }
+
   return {
     mode,
     daemon: daemonAlive,
@@ -133,6 +152,7 @@ export function readStatusSnapshot(): StatusSnapshot {
     launchAgentInstalled,
     launchAgentPath,
     launchAgentLoaded,
+    skills,
   }
 }
 
@@ -320,6 +340,23 @@ export function formatStatus(snap: StatusSnapshot, opts: { verbose?: boolean }):
     }
   }
 
+  // skills adoption block — pack presence + per-runtime link counts
+  if (snap.skills && snap.skills.targets.length > 0) {
+    lines.push("")
+    if (v) {
+      lines.push("skills (Interceptor skill packs linked into AI runtimes — see 'interceptor skills status'):")
+    } else {
+      lines.push("skills:")
+    }
+    for (const t of snap.skills.targets) {
+      const mark = t.linked === t.total ? "✓" : "⚠"
+      lines.push(`  ${mark} ${t.id}: ${t.linked}/${t.total} linked`)
+    }
+    if (snap.skills.targets.some(t => t.linked < t.total)) {
+      lines.push("  hint: interceptor skills adopt")
+    }
+  }
+
   if (!snap.daemon) {
     lines.push("")
     lines.push("hint: run any interceptor command and the daemon will auto-start.")
@@ -346,5 +383,6 @@ export function snapshotToJson(snap: StatusSnapshot): Record<string, unknown> {
   }
   if (snap.browser) base.browser = snap.browser
   if (snap.extension) base.extension = snap.extension
+  if (snap.skills) base.skills = snap.skills
   return base
 }

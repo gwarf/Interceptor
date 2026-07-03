@@ -2,6 +2,7 @@ import { handleDaemonMessage, drainMessageQueue, pendingRequests } from "./messa
 import { safeNativePortDisconnect, safeNativePortPing, safeNativePortPost, shouldSkipNativeKeepalive } from "./native-port-lifecycle"
 import { recoverPendingRequestsAfterNativeDisconnect } from "./pending-request-recovery"
 import { INITIAL_RECONNECT_DELAY_MS, delayWithJitter, nextReconnectDelay } from "./reconnect-lifecycle"
+import { clearContextConflictBadge, registrationControlType, setContextConflictBadge } from "./context-registration"
 
 type ActiveTransport = "none" | "native" | "websocket"
 export type HostDeliveryResult = "sent" | "queued" | "failed"
@@ -55,6 +56,10 @@ function disconnectNativePort(port: chrome.runtime.Port | null): void {
   clearNativeStateFor(port)
 }
 
+function hasNativeMessaging(): boolean {
+  return typeof chrome.runtime.connectNative === "function"
+}
+
 function postNative(msg: unknown, port = nativePort): boolean {
   if (!port) return false
   const res = safeNativePortPost(port, msg)
@@ -70,6 +75,24 @@ function isWsOpen(): boolean {
   return true
 }
 
+function markWsUnregistered(): void {
+  wsReady = false
+  if (activeTransport === "websocket") activeTransport = "none"
+}
+
+function markWsRegistered(): void {
+  wsReady = true
+  clearContextConflictBadge(chrome)
+  if (activeTransport !== "native") {
+    activeTransport = "websocket"
+    wsReconnectDelay = INITIAL_RECONNECT_DELAY_MS
+    isConnecting = false
+    console.log("connection ready via ws channel")
+    drainMessageQueue()
+  }
+  drainOutboundRecoveryQueue()
+}
+
 function sendWs(msg: unknown): boolean {
   const channel = wsChannel
   if (!wsReady || !channel || channel.readyState !== WebSocket.OPEN) return false
@@ -79,6 +102,26 @@ function sendWs(msg: unknown): boolean {
   } catch {
     return false
   }
+}
+
+function sendWsRegistration(ws: WebSocket, contextId: string): boolean {
+  markWsUnregistered()
+  try {
+    ws.send(JSON.stringify({ type: "extension", contextId }))
+    return true
+  } catch (err) {
+    console.error("ws context registration send error:", err)
+    return false
+  }
+}
+
+function closeWsForReconnect(ws: WebSocket): void {
+  try { ws.close() } catch {}
+  if (wsChannel !== ws) return
+  stopWsKeepAlive()
+  markWsUnregistered()
+  wsChannel = null
+  scheduleWsReconnect()
 }
 
 function enqueueOutboundRecovery(msg: unknown): HostDeliveryResult {
@@ -144,6 +187,11 @@ function scheduleNativeReconnect(): void {
 }
 
 export function connectToHost(): void {
+  if (!hasNativeMessaging()) {
+    if (isWsOpen()) activeTransport = "websocket"
+    else connectWsChannel()
+    return
+  }
   if (nativePort || isConnecting) return
   isConnecting = true
 
@@ -241,6 +289,11 @@ function stopWsKeepAlive(): void {
 }
 
 async function getOrCreateContextId(): Promise<string> {
+  const configured = (globalThis as { INTERCEPTOR_APP_CONTEXT_ID?: unknown }).INTERCEPTOR_APP_CONTEXT_ID
+  if (typeof configured === "string" && configured.length > 0) {
+    await chrome.storage.local.set({ contextId: configured })
+    return configured
+  }
   const stored = await chrome.storage.local.get("contextId") as { contextId?: string }
   if (stored.contextId) return stored.contextId
   const id = crypto.randomUUID()
@@ -252,37 +305,46 @@ export function connectWsChannel(): void {
   if (wsChannel && (wsChannel.readyState === WebSocket.OPEN || wsChannel.readyState === WebSocket.CONNECTING)) return
   try {
     const ws = new WebSocket(WS_URL)
+    wsChannel = ws
     ws.onopen = async () => {
-      wsChannel = ws
-      wsReady = true
+      if (wsChannel !== ws) {
+        try { ws.close() } catch {}
+        return
+      }
+      markWsUnregistered()
       if (wsReconnectTimer) {
         clearTimeout(wsReconnectTimer)
         wsReconnectTimer = null
       }
       startWsKeepAlive()
       const contextId = await getOrCreateContextId()
-      if (ws.readyState !== WebSocket.OPEN) return
-      try {
-        ws.send(JSON.stringify({ type: "extension", contextId }))
-      } catch (err) {
-        console.error("ws handshake send error:", err)
-        ws.close()
+      if (wsChannel !== ws) {
+        try { ws.close() } catch {}
         return
       }
-      console.log("ws channel connected")
-      if (activeTransport !== "native") {
-        activeTransport = "websocket"
-        wsReconnectDelay = INITIAL_RECONNECT_DELAY_MS
-        isConnecting = false
-        console.log("connection ready via ws channel")
-        drainMessageQueue()
+      if (ws.readyState !== WebSocket.OPEN) return
+      if (!sendWsRegistration(ws, contextId)) {
+        closeWsForReconnect(ws)
+        return
       }
-      drainOutboundRecoveryQueue()
+      console.log("ws channel connected; context registration requested")
     }
     ws.onmessage = (event) => {
+      if (wsChannel !== ws) return
       try {
         const msg = JSON.parse(typeof event.data === "string" ? event.data : "")
         console.log("ws onmessage:", JSON.stringify(msg).slice(0, 200))
+        const controlType = registrationControlType(msg)
+        if (controlType === "context_conflict") {
+          markWsUnregistered()
+          console.error(`[interceptor] context name conflict: '${msg.contextId}' is already registered. Change the context ID in the extension popup.`)
+          setContextConflictBadge(chrome)
+          return
+        }
+        if (controlType === "context_registered") {
+          markWsRegistered()
+          return
+        }
         if (msg.id && msg.action) {
           msg._viaWs = true
           handleDaemonMessage(msg)
@@ -292,23 +354,22 @@ export function connectWsChannel(): void {
       }
     }
     ws.onclose = () => {
+      if (wsChannel !== ws) return
       stopWsKeepAlive()
-      wsReady = false
+      markWsUnregistered()
       wsChannel = null
-      if (activeTransport === "websocket") activeTransport = "none"
       scheduleWsReconnect()
     }
     ws.onerror = () => {
+      if (wsChannel !== ws) return
       stopWsKeepAlive()
-      wsReady = false
+      markWsUnregistered()
       wsChannel = null
-      if (activeTransport === "websocket") activeTransport = "none"
       scheduleWsReconnect()
     }
   } catch {
-    wsReady = false
+    markWsUnregistered()
     wsChannel = null
-    if (activeTransport === "websocket") activeTransport = "none"
     scheduleWsReconnect()
   }
 }
@@ -336,15 +397,15 @@ export function registerStorageContextListener(): void {
     const newId = changes.contextId.newValue
     if (typeof newId !== "string" || newId.length === 0) return
     if (!newId || !wsChannel || wsChannel.readyState !== WebSocket.OPEN) return
-    try {
-      wsChannel.send(JSON.stringify({ type: "extension", contextId: newId }))
-    } catch (err) {
-      console.error("ws context re-register error:", err)
+    const channel = wsChannel
+    if (!sendWsRegistration(channel, newId)) {
+      closeWsForReconnect(channel)
     }
   })
 }
 
 export function registerAlarmListener(): void {
+  if (!chrome.alarms) return
   chrome.alarms.create("keepalive", { periodInMinutes: 0.5 })
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name !== "keepalive") return
