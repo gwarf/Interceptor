@@ -236,9 +236,15 @@ async function handleDomRenderScreenshot(
 
     if (requestedFormat === "webp") {
       try {
-        dataUrl = await reencodeAsWebP(dataUrl, webpQuality)
+        // Bound the post-render webp re-encode too, so a large render that
+        // succeeds but re-encodes slowly can't hang past the CLI ceiling
+        // (the render guard above only covers the render itself).
+        dataUrl = await withCaptureTimeout("webp-reencode", reencodeAsWebP(dataUrl, webpQuality), DOM_RENDER_TIMEOUT_MS)
         outputFormat = "webp"
       } catch (err) {
+        if (err instanceof CaptureTimeoutError) {
+          return { success: false, error: `webp re-encode timed out after ${DOM_RENDER_TIMEOUT_MS}ms — the rendered page was too large to re-encode in time` }
+        }
         return { success: false, error: `webp re-encode failed: ${(err as Error).message}` }
       }
     }

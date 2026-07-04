@@ -355,6 +355,25 @@ export async function handleDomScreenshot(action: DomScreenshotAction): Promise<
       data: { dataUrl, format, width: outWidth, height: outHeight, pixelRatio, mode }
     }
   } catch (err) {
-    return { success: false, error: `dom render failed: ${(err as Error).message}` }
+    return { success: false, error: `dom render failed: ${describeRenderError(err)}` }
   }
+}
+
+// html-to-image can reject with a raw `error` DOM Event (an <img>/SVG onerror)
+// when the serialized-and-resource-embedded SVG fails to load/decode on a heavy
+// real page. A DOM Event has no `.message`, so `(err as Error).message` renders
+// the useless literal "undefined". Coerce every error shape into a meaningful,
+// non-"undefined" string, sanitizing AFTER coercion so a thrown literal
+// "undefined"/"null"/"" or "[object Object]" can never leak.
+export function describeRenderError(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message
+  if (typeof Event !== "undefined" && err instanceof Event) {
+    const target = err.target as { src?: string; tagName?: string } | null
+    return `image load failed (${err.type}${target?.tagName ? ` on <${target.tagName.toLowerCase()}>` : ""}) — the rendered SVG could not be decoded, likely too large or a resource blocked`
+  }
+  const s = typeof err === "string" ? err : String(err)
+  if (!s || s === "undefined" || s === "null" || s === "[object Object]") {
+    return "unknown render error (non-Error thrown)"
+  }
+  return s
 }
