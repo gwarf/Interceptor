@@ -75,10 +75,15 @@ export async function installScreenshotCorsRule(tabId: number): Promise<void> {
         addRules: [rule]
       })
     } catch (err) {
-      // Roll the refcount back so a failed install doesn't leave a phantom
-      // reference that blocks a later teardown. Callers place install OUTSIDE
-      // their try/finally, so a throw here means uninstall won't run.
-      corsRuleRefcount.delete(tabId)
+      // Roll back only THIS acquire's increment, not the whole entry — a
+      // concurrent same-tab acquire may have already bumped the count while this
+      // install was in flight, and wiping the map would strand it. Decrement by
+      // one; delete only if that leaves zero. Callers place install OUTSIDE
+      // their try/finally, so a throw here means uninstall won't run for this
+      // acquire, which is why we must undo its increment here.
+      const cur = corsRuleRefcount.get(tabId) ?? 0
+      if (cur <= 1) corsRuleRefcount.delete(tabId)
+      else corsRuleRefcount.set(tabId, cur - 1)
       throw err
     }
   }

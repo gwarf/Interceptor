@@ -101,4 +101,42 @@ describe("screenshot CORS rule refcount", () => {
     await installScreenshotCorsRule(9)
     expect(addsFor(9)).toBe(1)
   })
+
+  test("a failed install does NOT strand a concurrent same-tab acquire", async () => {
+    // Interleaving CodeRabbit flagged: A starts installing (0→1) and suspends
+    // on the DNR call; B acquires (1→2) while A is in flight and returns without
+    // touching DNR; then A's install FAILS. A's rollback must undo only its own
+    // increment (2→1), NOT wipe the whole entry — otherwise B is left believing
+    // the rule is live with no refcount, and a later uninstall accounting goes
+    // wrong. After the dust settles, B's single release must remove the rule.
+    const { installScreenshotCorsRule, uninstallScreenshotCorsRule } = await load()
+    const chromeUnderTest = (globalThis as { chrome: { declarativeNetRequest: { updateSessionRules: (o: SessionRuleCall) => Promise<void> } } }).chrome
+    const original = chromeUnderTest.declarativeNetRequest.updateSessionRules
+
+    // First DNR call (A's install) hangs until we release it, then rejects.
+    let releaseA: () => void
+    const aInstallGate = new Promise<void>((r) => { releaseA = r })
+    chromeUnderTest.declarativeNetRequest.updateSessionRules = async () => {
+      await aInstallGate
+      throw new Error("DNR quota")
+    }
+
+    const aDone = installScreenshotCorsRule(5).then(() => "ok", (e) => (e as Error).message)
+    // B acquires while A is still suspended in updateSessionRules.
+    await installScreenshotCorsRule(5) // 1→2, no DNR touch (prev !== 0)
+    // Let A's install fail now.
+    releaseA!()
+    expect(await aDone).toBe("DNR quota")
+
+    // B's reference must survive: a fresh install must NOT re-install DNR
+    // (count is still 1, so prev !== 0), and B's single uninstall must remove.
+    chromeUnderTest.declarativeNetRequest.updateSessionRules = original
+    await installScreenshotCorsRule(5) // if B were stranded (count 0), this would re-add
+    expect(addsFor(5)).toBe(0) // original was replaced with a no-op stub during A; real adds only counted post-restore
+    // Now release both remaining references (B + the last acquire) → one remove.
+    await uninstallScreenshotCorsRule(5)
+    expect(removesFor(5)).toBe(0) // still one ref alive
+    await uninstallScreenshotCorsRule(5)
+    expect(removesFor(5)).toBe(1) // last one out removes exactly once
+  })
 })
