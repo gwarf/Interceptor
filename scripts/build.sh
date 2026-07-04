@@ -227,6 +227,29 @@ else
   exit 1
 fi
 
+# Ad-hoc sign macOS binaries. Apple Silicon SIGKILLs unsigned Mach-O executables
+# (symptom: `interceptor` exits 137 / "Killed: 9" with empty output, daemon never
+# stays up). `bun build --compile` output can land unsigned or with a malformed
+# signature slot, so remove any existing signature then re-sign ad-hoc.
+# No --entitlements here: entitlement enforcement only applies under the
+# hardened runtime, which ad-hoc signing doesn't enable. Release builds are
+# re-signed (--force) with the real identity + entitlements by release.sh.
+if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign >/dev/null 2>&1; then
+  for b in dist/interceptor daemon/interceptor-daemon dist/interceptor-bridge; do
+    if [[ -f "$b" ]]; then
+      codesign --remove-signature "$b" 2>/dev/null || true
+      codesign --force --sign - "$b" && echo "  signed (adhoc): $b"
+      codesign --verify --strict "$b"
+    fi
+  done
+  # Smoke check: the exact failure this signing step fixes is a silent
+  # Killed:9 at first run, so prove the CLI actually executes.
+  if [[ "$TARGET" != "windows" && -x dist/interceptor ]]; then
+    ./dist/interceptor --version >/dev/null
+    echo "  smoke check: dist/interceptor --version OK"
+  fi
+fi
+
 echo "Build complete."
 echo "  Extension: extension/dist/"
 echo "  Electron extension: extension/dist-mv2/"
