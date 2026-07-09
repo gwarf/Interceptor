@@ -73,7 +73,8 @@ browser_installed() {
     Darwin:chrome-for-testing) [[ -d "/Applications/Google Chrome for Testing.app" ]]  && echo 1 || echo 0 ;;
     Darwin:edge)               [[ -d "/Applications/Microsoft Edge.app" ]]             && echo 1 || echo 0 ;;
     Darwin:vivaldi)            [[ -d "/Applications/Vivaldi.app" ]]                    && echo 1 || echo 0 ;;
-    Linux:brave)    command -v brave-browser >/dev/null 2>&1 && echo 1 || echo 0 ;;
+    Linux:brave)    ( command -v brave-browser >/dev/null 2>&1 \
+                  || command -v brave >/dev/null 2>&1 ) && echo 1 || echo 0 ;;
     Linux:chrome)   ( command -v google-chrome >/dev/null 2>&1 \
                   || command -v google-chrome-stable >/dev/null 2>&1 ) && echo 1 || echo 0 ;;
     *) echo 0 ;;
@@ -96,6 +97,7 @@ browser_bin_for() {
     Darwin:vivaldi)            echo "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi" ;;
     Linux:brave)
       if command -v brave-browser >/dev/null 2>&1; then echo brave-browser
+      elif command -v brave >/dev/null 2>&1; then echo brave
       else return 1; fi
       ;;
     Linux:chrome)
