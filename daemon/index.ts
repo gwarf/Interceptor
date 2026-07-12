@@ -17,7 +17,7 @@ import {
   type MonitorSessionMeta,
   updateSessionMeta,
 } from "../shared/monitor-artifacts"
-import { chooseOutboundTransport, validateContextRouting } from "./outbound-routing"
+import { chooseOutboundTransport, isRelayPing, relaySlotAfterClose, validateContextRouting } from "./outbound-routing"
 import { claimContextId, type ContextSocket } from "./context-registration"
 import { formatBridgeUnavailableError, getBridgeRecoveryActions, getBridgeRecoveryLayout } from "./bridge-recovery"
 import { clearDaemonRuntimeFiles, clearLockFile, decideDaemonStartupRole, decideSingletonGate, defaultLifecycleDeps, readPidState, spawnDetachedStandaloneDaemon, writeLockFile } from "./lifecycle"
@@ -879,12 +879,17 @@ function sendNativeMessage(msg: unknown, contextId?: string): void {
   if (preferred === "relay" && nativeRelaySocket) {
     if (failOversizedNativeMessage("native relay")) return
     log(`forwarding via relay: ${json.slice(0, 200)}`)
+    const relayAtSend = nativeRelaySocket
     try {
-      socketWriteFramed(nativeRelaySocket, json)
+      socketWriteFramed(relayAtSend, json)
       return
     } catch (err) {
       log(`relay send error: ${(err as Error).message}`)
-      nativeRelaySocket = null
+      // Identity-checked release. This block is synchronous (no yield between
+      // capture and check), so unlike the close handler this guard is
+      // belt-and-suspenders, not a race fix — kept so the invariant
+      // "only the owner releases the slot" holds at every release site.
+      if (nativeRelaySocket === relayAtSend) nativeRelaySocket = null
     }
   }
 
@@ -912,12 +917,13 @@ function sendNativeMessage(msg: unknown, contextId?: string): void {
   if (nativeRelaySocket) {
     if (failOversizedNativeMessage("fallback native relay")) return
     log(`fallback via relay: ${json.slice(0, 200)}`)
+    const relayAtSend = nativeRelaySocket
     try {
-      socketWriteFramed(nativeRelaySocket, json)
+      socketWriteFramed(relayAtSend, json)
       return
     } catch (err) {
       log(`fallback relay send error: ${(err as Error).message}`)
-      nativeRelaySocket = null
+      if (nativeRelaySocket === relayAtSend) nativeRelaySocket = null
     }
   }
 
@@ -1260,6 +1266,9 @@ try {
           // Native relay registration — relay process identifies itself
           if (request.type === "native-relay") {
             ;(socket as any).__nativeRelay = true
+            if (nativeRelaySocket && nativeRelaySocket !== socket) {
+              log("native relay superseded — previous registration replaced (reconnect or second browser)")
+            }
             nativeRelaySocket = socket
             log("native relay registered via IPC socket")
             continue
@@ -1267,6 +1276,16 @@ try {
 
           // Native relay message forwarding — route to extension protocol handler
           if ((socket as any).__nativeRelay) {
+            // Keepalive pings are answered directly on the originating socket:
+            // the extension's pong timer must measure THIS link, not the
+            // relay-slot routing state (a superseded slot starved pongs and
+            // forced endless 15s-timeout reconnects).
+            if (isRelayPing(request)) {
+              log("received ping (relay), sending pong to origin")
+              socketWriteFramed(socket, JSON.stringify({ type: "pong" }))
+              emitEvent("keepalive_ping")
+              continue
+            }
             handleNativeMessage(request as any)
             continue
           }
@@ -1390,8 +1409,13 @@ try {
       },
       close(socket: Bun.Socket<undefined>) {
         if ((socket as any).__nativeRelay) {
-          nativeRelaySocket = null
-          log("native relay disconnected")
+          const { slot, released } = relaySlotAfterClose(nativeRelaySocket, socket)
+          nativeRelaySocket = slot
+          if (released) {
+            log("native relay disconnected")
+          } else {
+            log("stale native relay closed — current relay registration kept")
+          }
         }
         socketBuffers.delete(socket)
         socketWriteQueues.delete(socket)
